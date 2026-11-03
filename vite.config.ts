@@ -10,6 +10,7 @@ const allowedHosts = (process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS ?? "")
 
 export default defineConfig({
   plugins: [react()],
+  base: "/F1/",
   server: {
     host: "0.0.0.0",
     port: 3000,
