@@ -182,6 +182,7 @@ interface Step2Props {
 
 function Step2(p: Step2Props) {
   const rates = useStore((s) => s.rates);
+  const setColumnExtra = useStore((s) => s.setColumnExtra);
   const active = p.equipment.find((e) => e.id === p.activeId) ?? p.equipment[0];
   return (
     <div style={{ padding: "0 8px 20px" }}>
@@ -284,91 +285,49 @@ function Step2(p: Step2Props) {
                       </div>
                     );
                   })}
+                  {/column|tower/i.test(eq.type) && (
+                    <>
+                      <div className="lg-tree-row group" style={{ marginTop: 6 }}>
+                        <div className="lg-part">
+                          <span className="twisty">[−]</span> Columns — additional details
+                        </div>
+                      </div>
+                      {columnBreakdownCost(eq, buildEquipmentBom(eq, rates), rates).map((r) => (
+                        <div className="lg-tree-row" key={r.component} style={{ marginBottom: 1 }}>
+                          <div className="lg-row" style={{ borderBottom: "1px solid #9a9a9a" }}>
+                            <span className="name">{r.component}</span>
+                            {r.derived ? (
+                              <input
+                                value={fmt(r.qty, 0)}
+                                readOnly
+                                tabIndex={-1}
+                                title={`from take-off · ${r.detail}`}
+                                style={{ background: "#f7f7f7", color: "#444" }}
+                              />
+                            ) : (
+                              <input
+                                value={eq.columnExtras?.[r.component]?.qty ?? ""}
+                                onChange={(e) => setColumnExtra(eq.id, r.component, "qty", e.target.value)}
+                                placeholder=""
+                                inputMode="decimal"
+                                aria-label={`${r.component} quantity`}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>
           );
         })}
       </div>
-      <Step2Columns equipment={p.equipment} rates={rates} />
-
       <div className="lg-note">
         QTY on each part = number of rows generated for that part in Step 4 (e.g. 4 nozzles → 4 nozzle
         rows). Select an equipment to expand its part list.
       </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------- columns sheet (24 rows, step 2) */
-function Step2Columns({ equipment, rates }: { equipment: Equipment[]; rates: RateBook }) {
-  const setColumnExtra = useStore((s) => s.setColumnExtra);
-  const [closed, setClosed] = useState<string[]>([]);
-  const toggle = (id: string) =>
-    setClosed((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
-
-  const cols = useMemo(
-    () => equipment.filter((e) => /column|tower/i.test(e.type)),
-    [equipment],
-  );
-  if (cols.length === 0) return null;
-
-  return (
-    <div className="est-tree sheet">
-      <div className="est-tree-title">
-        <span className="ico">▣</span> Columns
-      </div>
-      {cols.map((eq, idx) => {
-        const rows = columnBreakdownCost(eq, buildEquipmentBom(eq, rates), rates);
-        const isOpen = !closed.includes(eq.id);
-        return (
-          <div className="est-tree-block" key={eq.id}>
-            <div
-              className="est-tree-node one clickable"
-              role="button"
-              tabIndex={0}
-              onClick={() => toggle(eq.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") toggle(eq.id);
-              }}
-              aria-expanded={isOpen}
-            >
-              <span>
-                <b className="twisty">{isOpen ? "−" : "+"}</b> ▣ CL-{String(idx + 1).padStart(2, "0")} ·{" "}
-                {eq.tag} {eq.name}
-              </span>
-              <span className="tot">{fmt(columnTotal(rows) * eq.qty, 0)}</span>
-            </div>
-            {isOpen &&
-              rows.map((r) => (
-                <div className={`est-tree-row one${r.derived ? "" : " manual"}`} key={r.component}>
-                  <div className="lbl" title={r.detail}>
-                    {r.component}
-                  </div>
-                  <div className="val">
-                    {r.derived ? (
-                      fmt(r.amount, 0)
-                    ) : (
-                      <input
-                        value={eq.columnExtras?.[r.component]?.amount ?? ""}
-                        onChange={(e) => setColumnExtra(eq.id, r.component, "amount", e.target.value)}
-                        placeholder=""
-                        inputMode="decimal"
-                        aria-label={`${r.component} amount BHD`}
-                      />
-                    )}
-                  </div>
-                </div>
-              ))}
-            {isOpen && (
-              <div className="est-tree-foot one">
-                <span className="lbl">{eq.tag} total</span>
-                <span className="val">{fmt(columnTotal(rows) * eq.qty, 0)}</span>
-              </div>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }
