@@ -7,6 +7,8 @@ import { defaultsSummary, derivedInfo } from "../lib/autofill";
 import { CURRENCIES, getCurrency, FX_NOTE } from "../lib/currency";
 import { columnBreakdownCost, columnTotal } from "../lib/columnBreakdown";
 import { COLUMN_UNITS, type ProjectUnit } from "../data/units";
+import { exchangerComponents } from "../lib/exchangerParts";
+import { ExchangerBasis, ExchangerDetails, ExchangerSheet } from "./estimatorExchanger";
 import type { Equipment, FieldDef, RateBook } from "../lib/types";
 
 const STEPS = [
@@ -183,6 +185,7 @@ interface Step2Props {
 function Step2(p: Step2Props) {
   const rates = useStore((s) => s.rates);
   const setColumnExtra = useStore((s) => s.setColumnExtra);
+  const setHeExtra = useStore((s) => s.setHeExtra);
   const active = p.equipment.find((e) => e.id === p.activeId) ?? p.equipment[0];
   return (
     <div style={{ padding: "0 8px 20px" }}>
@@ -261,7 +264,7 @@ function Step2(p: Step2Props) {
               {isActive && (
                 <div className="lg-sub">
                   {/* columns show only the 24-row legacy breakdown */}
-                  {!isColumnEquipment(eq) && PART_DEFS.map((def) => {
+                  {!isColumnEquipment(eq) && !isExchangerEquipment(eq) && PART_DEFS.map((def) => {
                     const rows = eq.parts[def.key] ?? [];
                     return (
                       <div className="lg-tree-row" key={def.key} style={{ marginBottom: 1 }}>
@@ -286,6 +289,36 @@ function Step2(p: Step2Props) {
                       </div>
                     );
                   })}
+                  {isExchangerEquipment(eq) && (
+                    <>
+                      {exchangerComponents(eq).map((c) => (
+                        <div className="lg-tree-row" key={c.key} style={{ marginBottom: 1 }}>
+                          <div className="lg-row" style={{ borderBottom: "1px solid #9a9a9a" }}>
+                            <span className="name" title={c.detail}>
+                              {c.label}
+                            </span>
+                            {c.derived ? (
+                              <input
+                                value={fmt(c.qty, 0)}
+                                readOnly
+                                tabIndex={-1}
+                                title={`from TEMA / ASME design · ${c.detail}`}
+                                style={{ background: "#f7f7f7", color: "#444" }}
+                              />
+                            ) : (
+                              <input
+                                value={eq.heExtras?.[c.key]?.qty ?? ""}
+                                onChange={(e) => setHeExtra(eq.id, c.key, "qty", e.target.value)}
+                                placeholder=""
+                                inputMode="decimal"
+                                aria-label={`${c.label} quantity`}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                   {isColumnEquipment(eq) && (
                     <>
                       {columnBreakdownCost(eq, buildEquipmentBom(eq, rates), rates).map((r) => (
@@ -333,6 +366,9 @@ function Step2(p: Step2Props) {
 const isColumnEquipment = (eq: Equipment) =>
   /column|tower/i.test(eq.type) || COLUMN_UNITS.some((u) => u.tag === eq.tag);
 
+/** shell & tube exchangers carry their own TEMA/ASME sheet */
+const isExchangerEquipment = (eq: Equipment) => /exchanger/i.test(eq.type) || Boolean(eq.he);
+
 function Step3(p: {
   equipment: Equipment[];
   activeId: string | null;
@@ -344,6 +380,7 @@ function Step3(p: {
   const active = p.equipment.find((e) => e.id === p.activeId) ?? p.equipment[0];
   if (!p.equipment.length || !active) return <div className="lg-note">No equipment to edit.</div>;
 
+  if (isExchangerEquipment(active)) return <ExchangerBasis eq={active} />;
   const info = derivedInfo(active);
   const shellRow = active.parts.shell?.[0] ?? {};
   const plateMat = shellRow.sh_mat ?? "SA-516 Gr.70";
@@ -691,6 +728,7 @@ function Step4(p: {
     return out;
   }, [active, rates]);
   if (!active) return <div className="lg-note">Create an equipment first.</div>;
+  if (isExchangerEquipment(active)) return <ExchangerSheet equipment={p.equipment} activeId={active.id} />;
 
   return (
     <div style={{ padding: "0 8px 18px" }}>
@@ -1022,6 +1060,7 @@ function Step6() {
         <Box k="Estimate value" v={money(total)} />
       </div>
       <ColumnDetails equipment={equipment} rates={rates} />
+      <ExchangerDetails equipment={equipment} />
       <div className="lg-note" style={{ marginTop: 10 }}>
         Prepared by {project.preparedBy} · Client {project.client} · {project.location} · enquiry{" "}
         {project.enquiryDate} · revision {project.revision}. All prices are ex-works in {cur.code}{" "}

@@ -63,6 +63,10 @@ export interface Equipment {
   columnExtras?: Record<string, { qty: string; amount: string }>;
   /** internally lined vessel — flange facing and RF pad carry a lining */
   lined?: boolean;
+  /** heat exchanger design basis (TEMA + ASME VIII-1) — drives the exchanger sheet */
+  he?: import("./tema").ExchangerSpec;
+  /** exchanger components that are not in the design (expansion joint, lugs …) */
+  heExtras?: Record<string, { qty: string; amount: string }>;
 }
 
 export interface ProjectInfo {

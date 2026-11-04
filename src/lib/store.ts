@@ -5,6 +5,7 @@ import { DEFAULT_RATES } from "./bom";
 import { PART_DEFS, PART_BY_KEY, defaultRow } from "./parts";
 import { applyHeaderDefaults } from "./autofill";
 import { BASE_CURRENCY, formatMoney, getCurrency } from "./currency";
+import { DEFAULT_EXCHANGER_SPEC } from "./tema";
 
 let seq = 1;
 const uid = (p = "eq") => `${p}-${Date.now().toString(36)}-${(seq++).toString(36)}`;
@@ -42,6 +43,11 @@ export function newEquipment(type = "Pressure Vessel", tag = "", name = ""): Equ
     paintSystem: "Epoxy 2 coat",
     parts: starterParts(),
   };
+  if (/exchanger/i.test(eq.type)) {
+    // an exchanger is estimated from its TEMA/ASME design basis, not vessel parts
+    const he = { ...DEFAULT_EXCHANGER_SPEC };
+    return { ...eq, parts: {}, he, heExtras: {} };
+  }
   // the header is the single source of truth — pre-fill the whole part sheet
   return applyHeaderDefaults(eq);
 }
@@ -191,6 +197,15 @@ function seedExchanger(): Equipment {
   eq.jointEfficiency = 0.85;
   eq.insulationThk = 75;
   eq.radiography = "Full RT";
+  eq.he = {
+    ...DEFAULT_EXCHANGER_SPEC,
+    tema: "BEM",
+    surfaceM2: 320,
+    shellPressure: 883,
+    tubePressure: 883,
+    shellTemp: 140,
+    tubeTemp: 140,
+  };
   eq.parts = {
     ...eq.parts,
     shell: [{ ...defaultRow("shell"), sh_id: "900", sh_thk: "14", sh_len: "6000", sh_mat: "SA-516 Gr.70", sh_stiff: "No" }],
@@ -226,6 +241,10 @@ export interface AppState {
   replaceEquipment: (list: Equipment[]) => void;
   /** column breakdown rows that are not part of the take-off */
   setColumnExtra: (id: string, component: string, field: "qty" | "amount", value: string) => void;
+  /** heat exchanger rows that the TEMA design does not produce */
+  setHeExtra: (id: string, component: string, field: "qty" | "amount", value: string) => void;
+  /** edit the exchanger design basis and re-derive its sheet */
+  setHeSpec: (id: string, patch: Partial<import("./tema").ExchangerSpec>) => void;
   removeEquipment: (id: string) => void;
   updateEquipment: (id: string, patch: Partial<Equipment>) => void;
   /** re-derive the whole part sheet from the equipment header */
@@ -279,6 +298,26 @@ export const useStore = create<AppState>()(
             row[field] = value;
             extras[component] = row;
             return { ...e, columnExtras: extras };
+          }),
+        }),
+      setHeExtra: (id, component, field, value) =>
+        set({
+          equipment: get().equipment.map((e) => {
+            if (e.id !== id) return e;
+            const extras = { ...(e.heExtras ?? {}) };
+            const row = { ...(extras[component] ?? { qty: "", amount: "" }) };
+            row[field] = value;
+            extras[component] = row;
+            return { ...e, heExtras: extras };
+          }),
+        }),
+      setHeSpec: (id, patch) =>
+        set({
+          equipment: get().equipment.map((e) => {
+            if (e.id !== id || !e.he) return e;
+            const he = { ...e.he, ...patch };
+            // the header mirrors the design so the rest of the app stays consistent
+            return { ...e, he };
           }),
         }),
       removeEquipment: (id) =>

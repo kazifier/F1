@@ -4,6 +4,7 @@
 import type { Equipment, PartRow, RateBook } from "./types";
 import { materialByName, pipeOd, pipeWall, flangeMass, studSpec, MATERIALS, type StudSpec } from "./catalog";
 import { PART_BY_KEY } from "./parts";
+import { buildExchangerBom } from "./exchangerParts";
 
 // All rates are in BHD (the facility currency). Every amount in the app is a
 // net price — Bahrain VAT is never added to a total.
@@ -123,6 +124,8 @@ const nutMass = (spec: StudSpec, density: number) =>
 // Main take-off for one equipment
 // ---------------------------------------------------------------------------
 export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
+  // shell & tube exchangers have their own TEMA/ASME sheet, not the vessel parts
+  if (/exchanger/i.test(eq.type)) return buildExchangerBom(eq, rates);
   const items: BomItem[] = [];
   const push = (p: Omit<BomItem, "uid" | "equipmentId" | "equipmentTag" | "equipmentName" | "amount">) => {
     const mRate = rates.materialRate[p.material] ?? materialByName(p.material).rate;

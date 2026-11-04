@@ -13,14 +13,18 @@ import {
   type ProjectUnit,
 } from "../data/units";
 import { auditUnit, buildScope, unitAssumptions, unitToEquipment } from "../data/build";
+import { EXCHANGER_UNITS } from "../data/exchangers";
+import { buildExchangerScope, exchangerToEquipment } from "../lib/exchangerParts";
+import { designExchanger } from "../lib/tema";
 import type { Equipment } from "../lib/types";
 
-type Tab = "columns" | "vessels";
+type Tab = "columns" | "vessels" | "exchangers";
 
 export default function ProjectPage() {
   const { equipment, rates, replaceEquipment, setColumnExtra } = useStore();
   const [tab, setTab] = useState<Tab>("columns");
   const [selected, setSelected] = useState<string>("10-C01");
+  const [heSelected, setHeSelected] = useState<string>("10-E01");
   const [openCols, setOpenCols] = useState<string[]>(() => [COLUMN_UNITS[0].tag]);
   const toggleCol = (tag: string) =>
     setOpenCols((cur) => (cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag]));
@@ -41,6 +45,22 @@ export default function ProjectPage() {
   /** the datasheet build of every tag, so the column sheet is complete before a tag is loaded */
   const builtByTag = useMemo(
     () => new Map(PROJECT_UNITS.map((u) => [u.tag, unitToEquipment(u)] as const)),
+    [],
+  );
+
+  const heLoadedByTag = useMemo(() => {
+    const m = new Map<string, Equipment>();
+    for (const e of equipment) {
+      if (!/exchanger/i.test(e.type)) continue;
+      const u = EXCHANGER_UNITS.find((x) => x.tag === e.tag && x.name === e.name);
+      if (u && !m.has(u.tag)) m.set(u.tag, e);
+    }
+    return m;
+  }, [equipment]);
+
+  /** the TEMA/ASME build of every exchanger, so the register shows the design before loading */
+  const heBuiltByTag = useMemo(
+    () => new Map(EXCHANGER_UNITS.map((u) => [u.tag, exchangerToEquipment(u)] as const)),
     [],
   );
 
@@ -86,6 +106,20 @@ export default function ProjectPage() {
 
   const loadScope = () => replaceEquipment(buildScope(PROJECT_UNITS));
 
+  const loadExchangerScope = () => replaceEquipment(buildExchangerScope(EXCHANGER_UNITS));
+
+  const loadExchanger = (tag: string) => {
+    const u = EXCHANGER_UNITS.find((x) => x.tag === tag);
+    if (!u) return;
+    const existing = equipment.find((e) => /exchanger/i.test(e.type) && e.tag === u.tag && e.name === u.name);
+    const built = exchangerToEquipment(u);
+    if (existing) {
+      replaceEquipment(equipment.map((e) => (e.id === existing.id ? { ...built, id: existing.id } : e)));
+    } else {
+      replaceEquipment([...equipment, built]);
+    }
+  };
+
   const weight = useMemo(() => {
     return equipment.reduce((a, e) => {
       const items = buildEquipmentBom(e, rates);
@@ -106,7 +140,7 @@ export default function ProjectPage() {
     <>
       <div className="page-head">
         <div>
-          <h2>Project scope — 6 columns, 25 vessels</h2>
+          <h2>Project scope — 6 columns, 25 vessels, 31 heat exchangers</h2>
           <div className="sub">
             Every tag below is transcribed from the client datasheet book (equipment list + UOP project
             specifications 9135751 / 9135753 / 9135752-301, internals per 307). Load a tag to build its
@@ -118,8 +152,11 @@ export default function ProjectPage() {
           <button className="btn" onClick={() => replaceEquipment([])}>
             Clear estimate
           </button>
-          <button className="btn btn-primary" onClick={loadScope}>
-            Load full scope (31)
+          <button className="btn" onClick={loadScope}>
+            Load columns &amp; vessels (31)
+          </button>
+          <button className="btn btn-primary" onClick={loadExchangerScope}>
+            Load heat exchangers (31)
           </button>
         </div>
       </div>
@@ -127,6 +164,7 @@ export default function ProjectPage() {
       <div className="grid g5" style={{ marginBottom: 14 }}>
         <Kpi k="Columns" v={`${COLUMN_UNITS.length}`} n="trayed + packed" />
         <Kpi k="Vessels" v={`${VESSEL_UNITS.length}`} n="drums, receivers, treaters" />
+        <Kpi k="Heat exchangers" v={`${EXCHANGER_UNITS.length}`} n="TEMA shell & tube, 401 series" />
         <Kpi k="In estimate" v={`${loadedCount} / 31`} n="loaded from datasheets" />
         <Kpi k="Purchased weight" v={`${fmtInt(weight)} kg`} n="loaded items, net take-off" />
         <Kpi k="Units of measure" v="mm · kg/cm² · °C" n="BHD base currency" />
@@ -147,9 +185,13 @@ export default function ProjectPage() {
               <span className="t">Vessels ×{VESSEL_UNITS.length}</span>
               <span className="n">10-D01 … 12-D10</span>
             </button>
+            <button className={`eq-tab ${tab === "exchangers" ? "active" : ""}`} onClick={() => setTab("exchangers")}>
+              <span className="t">Exchangers ×{EXCHANGER_UNITS.length}</span>
+              <span className="n">10-E01 … 12-E12 · TEMA</span>
+            </button>
           </div>
         </div>
-        <div className="card-body tight scroll-x">
+        <div className="card-body tight scroll-x" style={{ display: tab === "exchangers" ? "none" : undefined }}>
           <table className="data">
             <thead>
               <tr>
@@ -226,9 +268,76 @@ export default function ProjectPage() {
             </tbody>
           </table>
         </div>
+
+        {tab === "exchangers" && (
+          <div className="card-body tight scroll-x">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Tag</th>
+                  <th>Service</th>
+                  <th>Unit</th>
+                  <th>TEMA</th>
+                  <th className="num">Surface m²</th>
+                  <th className="num">Shell P/T</th>
+                  <th className="num">Tube P/T</th>
+                  <th className="num">Shell ID</th>
+                  <th className="num">Tubes</th>
+                  <th className="num">Bundle kg</th>
+                  <th>Loaded</th>
+                </tr>
+              </thead>
+              <tbody>
+                {EXCHANGER_UNITS.map((u) => {
+                  const eq = heLoadedByTag.get(u.tag) ?? heBuiltByTag.get(u.tag)!;
+                  const d = designExchanger(eq.he!);
+                  const on = heLoadedByTag.has(u.tag);
+                  return (
+                    <tr
+                      key={u.tag}
+                      onClick={() => setHeSelected(u.tag)}
+                      style={{
+                        cursor: "pointer",
+                        background: u.tag === heSelected ? "rgba(37,99,235,.07)" : undefined,
+                      }}
+                    >
+                      <td className="mono nowrap">
+                        <strong>{u.tag}</strong>
+                      </td>
+                      <td>{u.name}</td>
+                      <td className="small nowrap">{u.group}</td>
+                      <td className="small mono">{u.tema}</td>
+                      <td className="num">{d.surfaceTotal.toFixed(0)}</td>
+                      <td className="num small nowrap">{u.pShell} / {u.tShell} °C</td>
+                      <td className="num small nowrap">{u.pTube} / {u.tTube} °C</td>
+                      <td className="num">{d.shellId}</td>
+                      <td className="num">{d.tubesTotal}</td>
+                      <td className="num">{fmtInt(d.weights.bundle)}</td>
+                      <td>
+                        {on ? (
+                          <span className="pill ok">loaded</span>
+                        ) : (
+                          <button
+                            className="btn btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              loadExchanger(u.tag);
+                            }}
+                          >
+                            Load
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      <div className="grid g2" style={{ marginTop: 14 }}>
+      <div className="grid g2" style={{ marginTop: 14, display: tab === "exchangers" ? "none" : undefined }}>
         <div className="card">
           <div className="card-head">
             <h3>
@@ -336,7 +445,7 @@ export default function ProjectPage() {
         </div>
       </div>
 
-      <div className="card" style={{ marginTop: 14 }}>
+      <div className="card" style={{ marginTop: 14, display: tab === "exchangers" ? "none" : undefined }}>
         <div className="card-head">
           <h3>Nozzle & manway schedule — {unit.tag}</h3>
           <span className="hint">
@@ -377,7 +486,7 @@ export default function ProjectPage() {
         </div>
       </div>
 
-      <div className="est-panel">
+      <div className="est-panel" style={{ display: tab === "exchangers" ? "none" : undefined }}>
         <div className="est-panel-head">Columns — estimate breakdown (legacy column sheet)</div>
         <div className="est-panel-body">
           <div className="est-tree">
@@ -420,6 +529,74 @@ export default function ProjectPage() {
           open for the estimator (shown in italics, amounts in BHD).
         </div>
       </div>
+
+      {tab === "exchangers" && (() => {
+        const u = EXCHANGER_UNITS.find((x) => x.tag === heSelected) ?? EXCHANGER_UNITS[0];
+        const eq = heLoadedByTag.get(u.tag) ?? heBuiltByTag.get(u.tag)!;
+        const d = designExchanger(eq.he!);
+        return (
+          <div className="grid g2" style={{ marginTop: 14 }}>
+            <div className="card">
+              <div className="card-head">
+                <h3>{u.tag} · {u.name}</h3>
+                <span className="hint">{u.group} unit · TEMA {u.tema}</span>
+              </div>
+              <div className="card-body">
+                <table className="data">
+                  <tbody>
+                    <Row k="Service" v={u.service} />
+                    <Row k="TEMA / arrangement" v={`${u.tema} — ${u.group === "FBP" ? "1.25Cr-0.5Mo" : "killed carbon steel"}, ${d.spec.shells} shell${d.spec.shells === 1 ? "" : "s"}, ${d.spec.shellPasses} shell pass / ${d.spec.tubePasses} tube passes`} />
+                    <Row k="Effective surface" v={`${fmt(d.surfaceTotal, 0)} m² (datasheet ${fmt(u.surfaceM2, 0)} m²)`} />
+                    <Row k="Shell" v={`Ø${d.shellId} ID × ${d.shellThk} mm · ${d.spec.tubeLength} mm tubes`} />
+                    <Row k="Tubes" v={`${d.tubesTotal} × Ø${u.tubeOd} × ${u.tubeThk} mm, ${u.pitch} mm ${u.pattern}° pitch`} />
+                    <Row k="Design pressure" v={`shell ${u.pShell} kg/cm²(g) · tube ${u.pTube} kg/cm²(g)`} />
+                    <Row k="Design temperature" v={`shell ${u.tShell} °C · tube ${u.tTube} °C · MDMT ${u.mdmt} °C`} />
+                    <Row k="MOC / CA" v={`${u.shellMat} shell · ${u.tubeMat} tubes · CA ${u.ca} mm`} />
+                    <Row k="Tubesheets" v={`${d.tubesheetThk} mm ${d.fixedTubesheet ? "fixed" : "floating"} plates (TEMA RCB-7.2)`} />
+                    <Row k="Baffles" v={`${d.baffleCount} × ${d.baffleCut}% cut at ${d.baffleSpacing} mm c/c · ${d.tieRods} tie rods`} />
+                    <Row k="Bundle / unit weight" v={`${fmtInt(d.weights.bundle)} kg bundle · ${fmtInt(d.weights.total * d.spec.shells)} kg per unit`} />
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-head">
+                <h3>TEMA / ASME design check</h3>
+                <span className="hint">ASME VIII Div.1 · TEMA 9th edition</span>
+              </div>
+              <div className="card-body">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 120 }}>Code</th>
+                      <th style={{ width: 120 }}>Item</th>
+                      <th>Check</th>
+                      <th style={{ width: 60 }}>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.checks.map((c) => (
+                      <tr key={c.code + c.item}>
+                        <td className="small">{c.code}</td>
+                        <td className="small">{c.item}</td>
+                        <td className="small">{c.detail}</td>
+                        <td style={{ color: c.ok ? "#1c6b1c" : "#8b0000", fontWeight: 700 }}>
+                          {c.ok ? "OK" : "REVIEW"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="small dim" style={{ marginTop: 8 }}>
+                  Bundle size is held inside the customer's 20 000 kg pulling limit by adding shells in
+                  parallel (UOP note: the number of shells is an estimate to be confirmed by the exchanger
+                  designer). Loading a tag builds its full part sheet in the estimating wizard.
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="callout" style={{ marginTop: 14 }}>
         <strong>Estimating-grade.</strong> Datasheet values are transcribed and independently re-checked
