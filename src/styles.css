@@ -1012,6 +1012,26 @@ table.data input, table.data select { border-radius: 0; border-color: #8a8a8a; p
 @media (max-width: 1250px) {
   .est-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+/* two-column sheet in step 2 — plain root row, heavier grid (legacy look) */
+.est-tree.sheet { border-color: #5a5a5a; margin-top: 12px; }
+.est-tree.sheet .est-tree-title {
+  background: #fff;
+  color: #111;
+  border-bottom: 1px solid #8a8a8a;
+}
+.est-tree.sheet .est-tree-row { border-color: #6f6f6f; }
+.est-tree.sheet .est-tree-row .lbl { background: #dcdcdc; border-right: 1px solid #6f6f6f; }
+.est-tree.sheet .est-tree-row .val { border-right: none; }
+
+/* two-column legacy sheet: component cell + one value cell (screenshot layout) */
+.est-tree-node.one,
+.est-tree-row.one,
+.est-tree-head.one,
+.est-tree-foot.one { grid-template-columns: 1fr 170px; }
+.est-tree-node.one { font-size: 11px; }
+.est-tree-row.one .lbl { padding-left: 30px; }
+.est-tree-row.one .val input { height: 17px; }
+
 .est-tree-block + .est-tree-block { margin-top: 10px; }
 .est-tree-block { border-bottom: 1px solid #e2e6e9; padding-bottom: 8px; }
 .est-tree-block:last-child { border-bottom: none; }

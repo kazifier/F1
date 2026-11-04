@@ -5,7 +5,9 @@ import { buildEquipmentBom, rollupCost } from "../lib/bom";
 import { EQUIPMENT_TYPES, HEAD_TYPES, materialGroups } from "../lib/catalog";
 import { defaultsSummary, derivedInfo } from "../lib/autofill";
 import { CURRENCIES, getCurrency, FX_NOTE } from "../lib/currency";
-import type { Equipment, FieldDef } from "../lib/types";
+import { columnBreakdownCost, columnTotal } from "../lib/columnBreakdown";
+import { COLUMN_UNITS, type ProjectUnit } from "../data/units";
+import type { Equipment, FieldDef, RateBook } from "../lib/types";
 
 const STEPS = [
   "Project Info",
@@ -179,6 +181,7 @@ interface Step2Props {
 }
 
 function Step2(p: Step2Props) {
+  const rates = useStore((s) => s.rates);
   const active = p.equipment.find((e) => e.id === p.activeId) ?? p.equipment[0];
   return (
     <div style={{ padding: "0 8px 20px" }}>
@@ -287,10 +290,85 @@ function Step2(p: Step2Props) {
           );
         })}
       </div>
+      <Step2Columns equipment={p.equipment} rates={rates} />
+
       <div className="lg-note">
         QTY on each part = number of rows generated for that part in Step 4 (e.g. 4 nozzles → 4 nozzle
         rows). Select an equipment to expand its part list.
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------- columns sheet (24 rows, step 2) */
+function Step2Columns({ equipment, rates }: { equipment: Equipment[]; rates: RateBook }) {
+  const setColumnExtra = useStore((s) => s.setColumnExtra);
+  const [closed, setClosed] = useState<string[]>([]);
+  const toggle = (id: string) =>
+    setClosed((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+
+  const cols = useMemo(
+    () => equipment.filter((e) => /column|tower/i.test(e.type)),
+    [equipment],
+  );
+  if (cols.length === 0) return null;
+
+  return (
+    <div className="est-tree sheet">
+      <div className="est-tree-title">
+        <span className="ico">▣</span> Columns
+      </div>
+      {cols.map((eq, idx) => {
+        const rows = columnBreakdownCost(eq, buildEquipmentBom(eq, rates), rates);
+        const isOpen = !closed.includes(eq.id);
+        return (
+          <div className="est-tree-block" key={eq.id}>
+            <div
+              className="est-tree-node one clickable"
+              role="button"
+              tabIndex={0}
+              onClick={() => toggle(eq.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") toggle(eq.id);
+              }}
+              aria-expanded={isOpen}
+            >
+              <span>
+                <b className="twisty">{isOpen ? "−" : "+"}</b> ▣ CL-{String(idx + 1).padStart(2, "0")} ·{" "}
+                {eq.tag} {eq.name}
+              </span>
+              <span className="tot">{fmt(columnTotal(rows) * eq.qty, 0)}</span>
+            </div>
+            {isOpen &&
+              rows.map((r) => (
+                <div className={`est-tree-row one${r.derived ? "" : " manual"}`} key={r.component}>
+                  <div className="lbl" title={r.detail}>
+                    {r.component}
+                  </div>
+                  <div className="val">
+                    {r.derived ? (
+                      fmt(r.amount, 0)
+                    ) : (
+                      <input
+                        value={eq.columnExtras?.[r.component]?.amount ?? ""}
+                        onChange={(e) => setColumnExtra(eq.id, r.component, "amount", e.target.value)}
+                        placeholder=""
+                        inputMode="decimal"
+                        aria-label={`${r.component} amount BHD`}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))}
+            {isOpen && (
+              <div className="est-tree-foot one">
+                <span className="lbl">{eq.tag} total</span>
+                <span className="val">{fmt(columnTotal(rows) * eq.qty, 0)}</span>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -984,11 +1062,143 @@ function Step6() {
         <Box k="Avg rate" v={`${money(totalWeight ? total / totalWeight : 0)}/kg`} />
         <Box k="Estimate value" v={money(total)} />
       </div>
+      <ColumnDetails equipment={equipment} rates={rates} />
       <div className="lg-note" style={{ marginTop: 10 }}>
         Prepared by {project.preparedBy} · Client {project.client} · {project.location} · enquiry{" "}
         {project.enquiryDate} · revision {project.revision}. All prices are ex-works in {cur.code}{" "}
         ({cur.name}), exclusive of Bahrain VAT ({rates.vatPct}%) and of packing &amp; forwarding unless
         noted in the rate book.
+      </div>
+    </div>
+  );
+}
+
+/** 24-row column breakdown for the columns actually in this estimate. */
+function ColumnDetails({ equipment, rates }: { equipment: Equipment[]; rates: RateBook }) {
+  const setColumnExtra = useStore((s) => s.setColumnExtra);
+  const [open, setOpen] = useState<string[]>([COLUMN_UNITS[0].tag]);
+  const toggle = (tag: string) =>
+    setOpen((cur) => (cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag]));
+
+  const cols = useMemo(() => {
+    return COLUMN_UNITS.map((u) => {
+      const eq = equipment.find((e) => e.tag === u.tag);
+      return eq ? { u, eq } : null;
+    }).filter((c): c is { u: ProjectUnit; eq: Equipment } => c !== null);
+  }, [equipment]);
+
+  const grand = cols.reduce(
+    (a, c) => a + columnTotal(columnBreakdownCost(c.eq, buildEquipmentBom(c.eq, rates), rates)) * c.eq.qty,
+    0,
+  );
+
+  return (
+    <div className="est-panel" style={{ marginTop: 14 }}>
+      <div className="est-panel-head">
+        <span className="est-panel-title">Columns — additional details</span>
+        <span className="est-panel-sub">
+          {cols.length} column{cols.length === 1 ? "" : "s"} in this estimate · 24 rows each
+        </span>
+      </div>
+      <div className="est-panel-body">
+        {cols.length === 0 && (
+          <div className="lg-note">
+            No columns in this estimate yet — add a Column / Tower in step 2, or load the scope from the
+            Project scope screen, to see its 24-row breakdown here.
+          </div>
+        )}
+        {cols.length > 0 && (
+          <div className="est-tree">
+            <div className="est-tree-title">
+              <span className="ico">▣</span> Columns
+            </div>
+            {cols.map(({ u, eq }) => {
+              const rows = columnBreakdownCost(eq, buildEquipmentBom(eq, rates), rates);
+              const isOpen = open.includes(u.tag);
+              return (
+                <div key={u.tag} className="est-tree-block">
+                  <div
+                    className="est-tree-node clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggle(u.tag)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") toggle(u.tag);
+                    }}
+                    aria-expanded={isOpen}
+                  >
+                    <span>
+                      <b className="twisty">{isOpen ? "−" : "+"}</b> ▣ {eq.tag} {eq.name}{" "}
+                      <span className="sub">qty {eq.qty}</span>
+                    </span>
+                    <span className="tot">{eq.qty}</span>
+                    <span className="tot">{fmt(columnTotal(rows), 0)}</span>
+                  </div>
+                  {isOpen && (
+                    <>
+                      <div className="est-tree-head">
+                        <span />
+                        <span className="r">Qty</span>
+                        <span className="r">Amount BHD</span>
+                      </div>
+                      {rows.map((r) => (
+                        <div className={`est-tree-row${r.derived ? "" : " manual"}`} key={r.component}>
+                          <div className="lbl" title={r.detail}>
+                            {r.component}
+                          </div>
+                          <div className="val">
+                            {r.derived ? (
+                              fmt(r.qty, 0)
+                            ) : (
+                              <input
+                                value={eq.columnExtras?.[r.component]?.qty ?? ""}
+                                onChange={(e) => setColumnExtra(eq.id, r.component, "qty", e.target.value)}
+                                placeholder="—"
+                                inputMode="decimal"
+                                aria-label={`${r.component} quantity`}
+                              />
+                            )}
+                          </div>
+                          <div className="val">
+                            {r.derived ? (
+                              fmt(r.amount, 0)
+                            ) : (
+                              <input
+                                value={eq.columnExtras?.[r.component]?.amount ?? ""}
+                                onChange={(e) => setColumnExtra(eq.id, r.component, "amount", e.target.value)}
+                                placeholder="—"
+                                inputMode="decimal"
+                                aria-label={`${r.component} amount`}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <div className="est-tree-foot">
+                        <span className="lbl">{u.tag} total</span>
+                        <span className="val" />
+                        <span className="val">{fmt(columnTotal(rows), 0)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            <div className="est-tree-foot">
+              <span className="lbl">Columns total</span>
+              <span className="val" />
+              <span className="val">{fmt(grand, 0)}</span>
+            </div>
+          </div>
+        )}
+        <div className="est-note">
+          Rows 1-14, 16, 17 and 22 are the take-off (shell, heads, nozzles, manways, supports, skirt,
+          ladders, platforms, trays, rungs, baffles, demisters, coalescers, vortex breaker, base ring,
+          boot, stiffener ring) and carry the allocated fabrication, welding, testing, PWHT, finish and
+          mark-ups. The remaining rows — internal support, fireproofing, foundation template, insulation
+          ring, lifting trunnion, tail lug, transportation saddle — are not pressure-part weights and stay
+          open for the estimator (shown in italics, amounts in BHD).
+        </div>
       </div>
     </div>
   );
