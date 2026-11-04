@@ -260,7 +260,8 @@ function Step2(p: Step2Props) {
 
               {isActive && (
                 <div className="lg-sub">
-                  {PART_DEFS.map((def) => {
+                  {/* columns show only the 24-row legacy breakdown */}
+                  {!isColumnEquipment(eq) && PART_DEFS.map((def) => {
                     const rows = eq.parts[def.key] ?? [];
                     return (
                       <div className="lg-tree-row" key={def.key} style={{ marginBottom: 1 }}>
@@ -287,11 +288,6 @@ function Step2(p: Step2Props) {
                   })}
                   {isColumnEquipment(eq) && (
                     <>
-                      <div className="lg-tree-row group" style={{ marginTop: 6 }}>
-                        <div className="lg-part">
-                          <span className="twisty">[−]</span> Columns — additional details
-                        </div>
-                      </div>
                       {columnBreakdownCost(eq, buildEquipmentBom(eq, rates), rates).map((r) => (
                         <div className="lg-tree-row" key={r.component} style={{ marginBottom: 1 }}>
                           <div className="lg-row" style={{ borderBottom: "1px solid #9a9a9a" }}>

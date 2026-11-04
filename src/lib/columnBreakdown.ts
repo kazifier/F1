@@ -92,6 +92,56 @@ const bucketOf = (it: BomItem): ColumnComponent | null => {
   }
 };
 
+type PartRow = Record<string, unknown>;
+
+/** Part rows of the take-off that make up one component (0 = manual row). */
+const partRowsOf = (eq: Equipment, component: ColumnComponent): PartRow[] => {
+  const parts = (eq.parts ?? {}) as Record<string, PartRow[] | undefined>;
+  const rows = (key: string) => parts[key] ?? [];
+  const yes = (r: PartRow, key: string) => r[key] === "Yes";
+  switch (component) {
+    case "Column Shell":
+      return rows("shell");
+    case "Column Heads":
+      return rows("head");
+    case "Base Ring":
+      return rows("shell").filter((r) => yes(r, "sh_baseRing"));
+    case "Stiffener Ring":
+      return rows("shell").filter((r) => yes(r, "sh_stiff"));
+    case "Nozzle":
+      return rows("nozzle");
+    case "Manways":
+      return rows("manway");
+    case "Skirt":
+      return rows("support").filter((r) => yes(r, "su_skirt"));
+    case "External Support": {
+      const sup = rows("support");
+      const flanged = sup.filter((r) => yes(r, "su_saddle") || yes(r, "su_leg"));
+      return flanged.length ? flanged : sup;
+    }
+    case "Ladders":
+      return rows("ladder");
+    case "Platforms":
+      return rows("platform");
+    case "Internal rungs":
+      return rows("rungs");
+    case "Tray Assembly":
+      return rows("baffle").filter((r) => !r.bf_kind || r.bf_kind === "Tray");
+    case "Baffles":
+      return rows("baffle").filter((r) => r.bf_kind && r.bf_kind !== "Tray");
+    case "Demisters":
+      return rows("demister");
+    case "Coalescers":
+      return rows("coalescer");
+    case "Vortex Breaker":
+      return rows("vortex");
+    case "Boot Shell":
+      return rows("boot");
+    default:
+      return [];
+  }
+};
+
 /** Aggregate one equipment's BOM into the legacy 24-row column breakdown. */
 export function columnBreakdown(eq: Equipment, items: BomItem[]): BreakdownRow[] {
   const acc = new Map<ColumnComponent, { qty: number; unit: string; amount: number; lines: number; weight: number }>();
@@ -108,15 +158,17 @@ export function columnBreakdown(eq: Equipment, items: BomItem[]): BreakdownRow[]
   return COLUMN_COMPONENTS.map((component) => {
     const e = acc.get(component);
     const extra = eq.columnExtras?.[component];
-    if (e && (e.qty > 0 || e.amount > 0)) {
+    const partRows = partRowsOf(eq, component);
+    const derived = partRows.length > 0 || (e ? e.qty > 0 || e.amount > 0 : false);
+    if (derived) {
       return {
         component,
-        qty: e.qty,
-        unit: e.unit,
-        amount: e.amount,
-        weight: e.weight,
+        qty: partRows.length,
+        unit: partRows.length ? "no" : (e?.unit ?? "no"),
+        amount: e?.amount ?? 0,
+        weight: e?.weight ?? 0,
         derived: true,
-        detail: `${e.lines} take-off line${e.lines === 1 ? "" : "s"}`,
+        detail: `${partRows.length} take-off row${partRows.length === 1 ? "" : "s"}`,
       };
     }
     return {
