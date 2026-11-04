@@ -285,7 +285,7 @@ function Step2(p: Step2Props) {
                       </div>
                     );
                   })}
-                  {/column|tower/i.test(eq.type) && (
+                  {isColumnEquipment(eq) && (
                     <>
                       <div className="lg-tree-row group" style={{ marginTop: 6 }}>
                         <div className="lg-part">
@@ -333,6 +333,10 @@ function Step2(p: Step2Props) {
 }
 
 /* ------------------------------------------------------------------ step 3 */
+/** Columns get the 24-row legacy breakdown; match by type or by datasheet tag. */
+const isColumnEquipment = (eq: Equipment) =>
+  /column|tower/i.test(eq.type) || COLUMN_UNITS.some((u) => u.tag === eq.tag);
+
 function Step3(p: {
   equipment: Equipment[];
   activeId: string | null;
