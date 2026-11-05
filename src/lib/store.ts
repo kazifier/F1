@@ -1,12 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Equipment, PartRow, ProjectInfo, RateBook } from "./types";
+import type { Equipment, LogisticsSettings, PartRow, ProjectInfo, RateBook } from "./types";
 import { DEFAULT_RATES } from "./bom";
 import { PART_DEFS, PART_BY_KEY, defaultRow } from "./parts";
 import { applyHeaderDefaults } from "./autofill";
 import { BASE_CURRENCY, formatMoney, getCurrency } from "./currency";
 import { DEFAULT_EXCHANGER_SPEC, defaultExchangerNozzles } from "./tema";
 import { DEFAULT_WELD } from "./welding";
+import { DEFAULT_LOGISTICS } from "./logistics";
 
 let seq = 1;
 const uid = (p = "eq") => `${p}-${Date.now().toString(36)}-${(seq++).toString(36)}`;
@@ -230,6 +231,10 @@ export interface AppState {
   project: ProjectInfo;
   equipment: Equipment[];
   rates: RateBook;
+  /** cross-country procurement & delivery basis */
+  logistics: LogisticsSettings;
+  /** BOQ line key → origin country selected for that part */
+  sourcing: Record<string, string>;
   step: number;
   activeEquipmentId: string | null;
   activePart: string;
@@ -260,6 +265,11 @@ export interface AppState {
   addRow: (id: string, partKey: string) => void;
   removeRow: (id: string, partKey: string, index: number) => void;
   setRates: (patch: Partial<RateBook>) => void;
+  setLogistics: (patch: Partial<LogisticsSettings>) => void;
+  /** choose the supply country for one BOQ line */
+  setSourcing: (key: string, origin: string) => void;
+  /** restore the default origin for every line */
+  clearSourcing: () => void;
   resetAll: () => void;
   loadDemo: () => void;
 }
@@ -282,6 +292,8 @@ export const useStore = create<AppState>()(
       project: defaultProject,
       equipment: [seedTank(), seedColumn(), seedExchanger()],
       rates: DEFAULT_RATES,
+      logistics: { ...DEFAULT_LOGISTICS },
+      sourcing: {},
       step: 1,
       activeEquipmentId: null,
       activePart: "shell",
@@ -411,11 +423,16 @@ export const useStore = create<AppState>()(
           }),
         }),
       setRates: (patch) => set({ rates: { ...get().rates, ...patch } }),
+      setLogistics: (patch) => set({ logistics: { ...get().logistics, ...patch } }),
+      setSourcing: (key, origin) => set({ sourcing: { ...get().sourcing, [key]: origin } }),
+      clearSourcing: () => set({ sourcing: {} }),
       resetAll: () =>
         set({
           project: defaultProject,
           equipment: [],
           rates: DEFAULT_RATES,
+          logistics: { ...DEFAULT_LOGISTICS },
+          sourcing: {},
           step: 1,
           activeEquipmentId: null,
         }),
@@ -424,16 +441,24 @@ export const useStore = create<AppState>()(
           project: defaultProject,
           equipment: [seedTank(), seedColumn(), seedExchanger()],
           rates: DEFAULT_RATES,
+          logistics: { ...DEFAULT_LOGISTICS },
+          sourcing: {},
           step: 1,
           activeEquipmentId: null,
         }),
     }),
     {
       name: "vessel-estimator-v1",
-      version: 4,
+      version: 5,
       migrate: (persisted: unknown, version: number) => {
         const s = persisted as { equipment?: Equipment[] } & Record<string, unknown>;
         // v3: rate book moved from INR benchmarks to BHD, currency is now a display setting
+        // v5: procurement / delivery basis and per-line sourcing added
+        if (version < 5) {
+          const st = s as { logistics?: unknown; sourcing?: unknown };
+          if (!st.logistics) st.logistics = { ...DEFAULT_LOGISTICS };
+          if (!st.sourcing) st.sourcing = {};
+        }
         // v4: welding / manhour basis added to the rate book
         if (version < 4) {
           const r = s.rates as (RateBook & { weld?: unknown }) | undefined;

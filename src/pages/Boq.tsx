@@ -2,13 +2,31 @@ import { useMemo, useState } from "react";
 import { useStore, fmt, fmtInt, money } from "../lib/store";
 import { buildBoq, buildEquipmentBom, rollupCost, exportCsv, type BomItem } from "../lib/bom";
 import { weldSummary } from "../lib/welding";
+import {
+  cheapestOrigin,
+  destinationNames,
+  destinationOf,
+  landedCost,
+  originNames,
+  shipmentPlan,
+} from "../lib/logistics";
 import { CURRENCIES, getCurrency } from "../lib/currency";
 import type { ItemCategory } from "../lib/bom";
 
 const CAT_ORDER: ItemCategory[] = ["Plate", "Pipe", "Flange", "Fitting", "Structure", "Consumable", "Service"];
 
 export default function BoqPage() {
-  const { equipment, rates, project, setProject } = useStore();
+  const {
+    equipment,
+    rates,
+    project,
+    setProject,
+    logistics,
+    setLogistics,
+    sourcing,
+    setSourcing,
+    clearSourcing,
+  } = useStore();
   const cur = getCurrency(project.currency);
   const [excluded, setExcluded] = useState<string[]>([]);
 
@@ -50,6 +68,38 @@ export default function BoqPage() {
   );
   const potentialSaving = boq.suggestions.reduce((a, s) => a + s.saving, 0);
 
+  // ---- cross-country procurement -------------------------------------------------
+  const landing = useMemo(
+    () =>
+      boq.lines.map((line) => {
+        const origin = sourcing[line.key] ?? logistics.defaultOrigin;
+        const ctx = line.weight > 25000 ? { maxLengthMm: 13000 } : {};
+        return { line, origin, breakdown: landedCost(line, origin, logistics, ctx) };
+      }),
+    [boq.lines, sourcing, logistics],
+  );
+  const plan = useMemo(() => shipmentPlan(landing, logistics), [landing, logistics]);
+  const dest = destinationOf(logistics.destination);
+  const originCount = new Set(landing.map((l) => l.origin)).size;
+
+  /** where another supply country would land the same part cheaper */
+  const advice = useMemo(
+    () =>
+      [...landing]
+        .sort((a, b) => b.line.amount - a.line.amount)
+        .slice(0, 6)
+        .map((entry) => {
+          const best = cheapestOrigin(entry.line, logistics);
+          const saving = entry.breakdown.total - best.total;
+          return { entry, best, saving };
+        })
+        .filter((a) => a.saving > Math.max(40, a.entry.line.amount * 0.01))
+        .sort((a, b) => b.saving - a.saving),
+    [landing, logistics],
+  );
+
+  const totalLanded = landing.reduce((a, x) => a + x.breakdown.total, 0);
+
   return (
     <>
       <div className="page-head">
@@ -58,9 +108,10 @@ export default function BoqPage() {
           <div className="sub">
             Every equipment combined into one procurement view: plate groups are nested on standard{" "}
             {rates.plateWidth}×{rates.plateLength} plates at {Math.round(rates.plateUtilisation * 100)}%
-            yield, nozzles/flanges are consolidated, and repeat equipment is batched. Exclude items to see
-            the effect on the price instantly. Every amount is ex-works, {cur.name} ({cur.code}) and
-            excludes VAT.
+            yield, nozzles/flanges consolidated and repeat equipment batched. Each line is sourced from its
+            own country and landed at <b>{dest.name}</b> — road inside the GCC, sea + road from everywhere
+            else, with duty, insurance, clearing and documentation. Ex-works prices are in {cur.name} ({cur.code})
+            and exclude VAT.
           </div>
         </div>
         <div className="actions">
@@ -84,7 +135,7 @@ export default function BoqPage() {
             className="btn btn-primary"
             onClick={() =>
               exportCsv(
-                boq.lines.map((l) => ({
+                landing.map(({ line: l, origin, breakdown: b }) => ({
                   Category: l.category,
                   Description: l.description,
                   Material: l.material,
@@ -97,9 +148,17 @@ export default function BoqPage() {
                   "Plates req.": l.platesRequired ?? "",
                   "Plate utilisation %": l.utilisation ? Math.round(l.utilisation * 100) : "",
                   [`Rate (${cur.code}/kg)`]: +(l.rate * cur.perBhd).toFixed(3),
-                  [`Amount (${cur.code})`]: +(l.amount * cur.perBhd).toFixed(cur.decimals),
+                  [`Ex-works (${cur.code})`]: +(l.amount * cur.perBhd).toFixed(cur.decimals),
+                  Origin: origin,
+                  Lane: b.lane,
+                  Mode: b.mode,
+                  Equipment: b.equipment,
+                  [`Freight (${cur.code})`]: +(b.freight * cur.perBhd).toFixed(cur.decimals),
+                  [`Duty ${b.dutyPct}% (${cur.code})`]: +(b.duty * cur.perBhd).toFixed(cur.decimals),
+                  [`Insurance (${cur.code})`]: +(b.insurance * cur.perBhd).toFixed(cur.decimals),
+                  [`Landed (${cur.code})`]: +((l.amount + b.total) * cur.perBhd).toFixed(cur.decimals),
                   Currency: cur.code,
-                  Equipment: l.equipmentTags.join(" / "),
+                  EquipmentTags: l.equipmentTags.join(" / "),
                 })),
                 `BOQ-${project.projectNo}.csv`,
               )
@@ -115,7 +174,107 @@ export default function BoqPage() {
         <Kpi k="Purchased weight" v={`${fmtInt(totalWeight)} kg`} n={`${boq.lines.length} BOQ groups`} />
         <Kpi k="Plates required" v={`${boq.totals.plates}`} n={`${fmtInt(boq.totals.plateWeight)} kg nested`} />
         <Kpi k="Material + fab" v={money(directMaterial + directFabrication)} n={`${money(totalWeight ? directMaterial / totalWeight : 0, cur.code)}/kg material avg`} />
-        <Kpi k="Quoted price" v={money(totalNet)} n={`excl. VAT · VAT ${rates.vatPct}% = ${money(totalVat)}`} />
+        <Kpi k="Quoted ex-works" v={money(totalNet)} n={`excl. VAT · VAT ${rates.vatPct}% = ${money(totalVat)}`} />
+      </div>
+
+      <div className="grid g4" style={{ marginBottom: 14 }}>
+        <Kpi k="Landed / delivered" v={money(totalNet + totalLanded)} n={`to ${dest.name} · ${logistics.incoterm}`} />
+        <Kpi k="Import & freight" v={money(plan.freight + plan.handling + plan.packing)} n={`${originCount} supply countries · ${plan.containers} × 40ft`} />
+        <Kpi k="Duty & clearance" v={money(plan.duty + plan.clearance + plan.docs)} n={`${fmt(plan.weight ? (plan.duty / Math.max(1, plan.material)) * 100 : 0, 1)}% effective on CIF`} />
+        <Kpi k="Insurance & surcharge" v={money(plan.insurance + plan.surcharge)} n={`${fmt(logistics.insurancePct, 2)}% marine cover · war-risk included`} />
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Procurement &amp; delivery basis</h3>
+          <span className="hint">every rate is editable — the landed cost of each line recalculates</span>
+        </div>
+        <div className="card-body">
+          <div className="grid g4">
+            <div className="field">
+              <label>Client destination</label>
+              <select value={logistics.destination} onChange={(e) => setLogistics({ destination: e.target.value })}>
+                {destinationNames().map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Default supply country</label>
+              <select value={logistics.defaultOrigin} onChange={(e) => setLogistics({ defaultOrigin: e.target.value })}>
+                {originNames().map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Incoterm (reference)</label>
+              <select value={logistics.incoterm} onChange={(e) => setLogistics({ incoterm: e.target.value as typeof logistics.incoterm })}>
+                {["EXW", "FOB", "CIF", "DAP", "DDP"].map((i) => (
+                  <option key={i} value={i}>{i}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Insurance (% CIF)</label>
+              <input type="number" step="0.05" value={logistics.insurancePct} onChange={(e) => setLogistics({ insurancePct: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Duty override (%) — blank = tariff</label>
+              <input
+                type="number"
+                step="0.5"
+                value={logistics.dutyOverridePct ?? ""}
+                placeholder={`${dest.duty}% at ${dest.name}`}
+                onChange={(e) => setLogistics({ dutyOverridePct: e.target.value === "" ? null : Number(e.target.value) })}
+              />
+            </div>
+            <div className="field">
+              <label>Road freight ({cur.code}/t·km)</label>
+              <input type="number" step="0.005" value={logistics.landRate} onChange={(e) => setLogistics({ landRate: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Sea freight factor</label>
+              <input type="number" step="0.05" value={logistics.seaRateFactor} onChange={(e) => setLogistics({ seaRateFactor: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Port handling ({cur.code}/t)</label>
+              <input type="number" step="0.5" value={logistics.portHandling} onChange={(e) => setLogistics({ portHandling: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Customs clearing ({cur.code}/shipment)</label>
+              <input type="number" step="10" value={logistics.clearance} onChange={(e) => setLogistics({ clearance: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Documentation ({cur.code}/shipment)</label>
+              <input type="number" step="10" value={logistics.documentation} onChange={(e) => setLogistics({ documentation: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Fuel / bunker surcharge (%)</label>
+              <input type="number" step="0.5" value={logistics.fuelPct} onChange={(e) => setLogistics({ fuelPct: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Export packing (% of material)</label>
+              <input type="number" step="0.1" value={logistics.packingPct} onChange={(e) => setLogistics({ packingPct: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>Abnormal load surcharge (%)</label>
+              <input type="number" step="1" value={logistics.abnormalLoadPct} onChange={(e) => setLogistics({ abnormalLoadPct: Number(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label>&nbsp;</label>
+              <button className="btn" onClick={clearSourcing} title="Every line returns to the default supply country">
+                Reset all lines to {logistics.defaultOrigin}
+              </button>
+            </div>
+          </div>
+          <div className="divider" />
+          <div className="small dim">
+            {dest.name}: {dest.note}. Port {dest.port} · {dest.inlandKm} km inland · import duty {dest.duty}%
+            {dest.warRiskPct ? ` · war-risk ${dest.warRiskPct}%` : ""}. Landed cost is CIF + duty + clearing +
+            documentation; clearing and documentation are charged once per origin per shipment.
+          </div>
+        </div>
       </div>
 
       <div className="card">
@@ -145,21 +304,23 @@ export default function BoqPage() {
 
       <div className="card">
         <div className="card-head">
-          <h3>Consolidated BOQ</h3>
-          <span className="hint">plate lines re-weighed on nested plates; all other lines are net take-off</span>
+          <h3>Consolidated BOQ — ex-works and landed</h3>
+          <span className="hint">plate lines re-weighed on nested plates; each line carries its own supply country</span>
         </div>
         <div className="card-body tight scroll-x" style={{ maxHeight: 620, overflowY: "auto" }}>
           <table className="data">
             <thead>
               <tr>
                 <th>Cat.</th><th>Description</th><th>Material</th><th className="num">Thk</th>
-                <th className="num">Qty</th><th className="num">Spare</th><th>Unit</th><th>Dimensions</th><th className="num">Weight (kg)</th>
-                <th className="num">Net area m²</th><th className="num">Plates</th><th className="num">Nest %</th>
-                <th className="num">{cur.code}/kg</th><th className="num">Amount {cur.code}</th><th>Equipment</th>
+                <th className="num">Qty</th><th className="num">Spare</th><th>Unit</th><th className="num">Weight (kg)</th>
+                <th className="num">Rate</th><th className="num">Ex-works</th>
+                <th>Origin</th><th>Mode / packing</th>
+                <th className="num">Freight</th><th className="num">Duty</th><th className="num">Insur.</th>
+                <th className="num">Landed</th><th>Tags</th>
               </tr>
             </thead>
             <tbody>
-              {boq.lines.map((l) => (
+              {landing.map(({ line: l, origin, breakdown: b }) => (
                 <tr key={l.key}>
                   <td><span className="pill">{l.category}</span></td>
                   <td>{l.description}</td>
@@ -168,15 +329,33 @@ export default function BoqPage() {
                   <td className="num">{fmt(l.qty, 1)}</td>
                   <td className="num">{l.qtySpare ? fmt(l.qtySpare, 1) : "-"}</td>
                   <td className="small">{l.unit}</td>
-                  <td className="small">{l.spec ?? "-"}</td>
                   <td className="num">{fmt(l.weight, 1)}</td>
-                  <td className="num">{l.plateArea ? fmt(l.plateArea, 2) : "-"}</td>
-                  <td className="num">{l.platesRequired ?? "-"}</td>
-                  <td className="num">{l.utilisation ? Math.round(l.utilisation * 100) : "-"}</td>
                   <td className="num">{fmt(l.rate * cur.perBhd, cur.decimals)}</td>
                   <td className="num">{fmt(l.amount * cur.perBhd, cur.decimals)}</td>
+                  <td>
+                    <select
+                      className="btn"
+                      style={{ padding: "1px 2px", fontSize: 10, minWidth: 96 }}
+                      value={origin}
+                      onChange={(e) => setSourcing(l.key, e.target.value)}
+                      title={b.lane}
+                    >
+                      {originNames().map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                    <div className="est-sub">{origin === dest.name ? "domestic" : `duty ${b.dutyPct}%`}</div>
+                  </td>
+                  <td className="small" title={`${b.note} · ${b.equipment}`}>
+                    {b.mode}
+                    <div className="est-sub">{b.equipment}</div>
+                  </td>
+                  <td className="num">{fmt(b.freight * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(b.duty * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(b.insurance * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt((l.amount + b.total) * cur.perBhd, cur.decimals)}</td>
                   <td className="taglist">
-                    {l.equipmentTags.map((t) => (
+                    {l.equipmentTags.slice(0, 3).map((t) => (
                       <span className="tag" key={t}>{t}</span>
                     ))}
                   </td>
@@ -185,15 +364,90 @@ export default function BoqPage() {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={8}>Total</td>
+                <td colSpan={7}>Total</td>
                 <td className="num">{fmtInt(boq.totals.weight)}</td>
-                <td colSpan={3} />
                 <td />
                 <td className="num">{fmt(boq.totals.amount * cur.perBhd, cur.decimals)}</td>
+                <td colSpan={2} />
+                <td className="num">{fmt(plan.freight * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.duty * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.insurance * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt((boq.totals.amount + totalLanded) * cur.perBhd, cur.decimals)}</td>
                 <td />
               </tr>
             </tfoot>
           </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Import, freight &amp; clearance — shipment plan</h3>
+          <span className="hint">
+            {fmtInt(plan.weight)} kg · {fmt(plan.volume, 1)} m³ · {plan.rows.length} supply countries ·{" "}
+            {plan.containers} × 40ft equivalent
+          </span>
+        </div>
+        <div className="card-body tight scroll-x">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Origin</th><th>Mode</th><th>Packing</th><th className="num">Weight (kg)</th>
+                <th className="num">m³</th><th>Containers</th>
+                <th className="num">Freight</th><th className="num">Handling</th><th className="num">Packing</th>
+                <th className="num">Duty</th><th className="num">Insurance</th><th className="num">Clearing</th>
+                <th className="num">Docs</th><th className="num">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.rows.map((r) => (
+                <tr key={r.origin}>
+                  <td>
+                    {r.origin}
+                    <div className="est-sub">{r.note}</div>
+                  </td>
+                  <td className="small">{r.mode}</td>
+                  <td className="small">{r.packing}</td>
+                  <td className="num">{fmtInt(r.weight)}</td>
+                  <td className="num">{fmt(r.volume, 1)}</td>
+                  <td className="small">{r.containers}</td>
+                  <td className="num">{fmt(r.freight * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(r.handling * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(r.packingCost * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(r.duty * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(r.insurance * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(r.clearance * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(r.docs * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">{fmt(r.subtotal * cur.perBhd, cur.decimals)}</td>
+                </tr>
+              ))}
+              {plan.rows.length === 0 && (
+                <tr><td colSpan={14} className="dim" style={{ padding: 10 }}>No procured parts in this scope.</td></tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={3}>Total logistics</td>
+                <td className="num">{fmtInt(plan.weight)}</td>
+                <td className="num">{fmt(plan.volume, 1)}</td>
+                <td />
+                <td className="num">{fmt(plan.freight * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.handling * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.packing * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.duty * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.insurance * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.clearance * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.docs * cur.perBhd, cur.decimals)}</td>
+                <td className="num">{fmt(plan.logistics * cur.perBhd, cur.decimals)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div className="est-note">
+          FCL on the sea lane, GCC road for GCC-to-GCC supply, flat rack / low-bed / breakbulk where a single
+          piece leaves the container envelope. Clearing and documentation are charged once per origin;
+          insurance is on material + freight; duty is on CIF at the {dest.name} tariff. Air freight is not
+          modelled — it is only justified for spares against a shutdown.
         </div>
       </div>
 
@@ -249,10 +503,47 @@ export default function BoqPage() {
                 <tr><td>Painting &amp; insulation</td><td className="num">{money(finishCost)}</td></tr>
                 <tr><td>Overhead + profit + freight</td><td className="num">{money(overheads)}</td></tr>
                 <tr><td><b>Ex-works total (excl. VAT)</b></td><td className="num"><b>{money(totalNet)}</b></td></tr>
+                <tr><td>Import freight, handling &amp; packing</td><td className="num">{money(plan.freight + plan.handling + plan.packing)}</td></tr>
+                <tr><td>Duty, clearing &amp; documentation</td><td className="num">{money(plan.duty + plan.clearance + plan.docs)}</td></tr>
+                <tr><td>Marine insurance &amp; surcharges</td><td className="num">{money(plan.insurance + plan.surcharge)}</td></tr>
+                <tr><td><b>Delivered {dest.name} ({logistics.incoterm})</b></td><td className="num"><b>{money(totalNet + plan.logistics)}</b></td></tr>
                 <tr><td className="dim">VAT @ {rates.vatPct}% — not included</td><td className="num dim">{money(totalVat)}</td></tr>
                 <tr><td>Effective rate</td><td className="num">{money(totalWeight ? totalNet / totalWeight : 0)}/kg</td></tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Sourcing advice</h3>
+          <span className="hint">same part, another supply country — landed cost compared</span>
+        </div>
+        <div className="card-body">
+          {advice.length === 0 && (
+            <p className="dim small">
+              Every line is already on its cheapest landed origin for the current freight basis.
+            </p>
+          )}
+          <div className="grid g2">
+            {advice.map((a) => (
+              <div className="callout" key={a.entry.line.key}>
+                <b>{a.entry.line.description}</b>
+                <span className="pill ok" style={{ marginLeft: 8 }}>{money(a.saving)} cheaper</span>
+                <div className="mt8 small">
+                  {a.entry.origin} → {a.best.origin} · landed {money(a.entry.line.amount + a.entry.breakdown.total)} →{" "}
+                  {money(a.entry.line.amount + a.best.total)}
+                  <button
+                    className="btn"
+                    style={{ marginLeft: 8, padding: "1px 6px", fontSize: 10 }}
+                    onClick={() => setSourcing(a.entry.line.key, a.best.origin)}
+                  >
+                    Source from {a.best.origin}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>

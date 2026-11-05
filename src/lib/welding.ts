@@ -272,10 +272,17 @@ export function weldLayers(t: number, prep: JointPrep, s: WeldSettings, groove: 
   ];
 }
 
-/** back-gouge method for one equipment: manual on small shells, machine on large */
+/**
+ * Back-gouge method for one equipment: manual on small shells, machine on large.
+ *
+ * Shop rule: every double V joint is back-gouged after the first (inner) side is
+ * welded and before the second (outer) side starts. A single V is back-gouged
+ * the same way once the plate is thick enough to need full penetration from
+ * both faces; square groove and thin plate are not gouged at all.
+ */
 export function gougeFor(eq: Equipment, t: number, prep: JointPrep, s: WeldSettings): GougeMethod {
-  if (prep !== "Single V") return "None"; // double V is welded both sides, square is thin
-  if (t <= 8) return "None"; // single pass, no back gouge needed
+  if (prep === "Square") return "None";
+  if (prep === "Single V" && t <= 8) return "None"; // single pass, no back gouge needed
   const dia = Math.max(eq.diameter || 0, eq.he ? designExchanger(eq.he).shellId : 0);
   if (s.gougeMethod !== "Auto") return s.gougeMethod;
   return dia >= s.gougeAutoDia ? "Machine grinding" : "Manual grinding";
@@ -290,16 +297,19 @@ export const layerText = (layers: WeldLayer[]) =>
 /** manhours per metre of joint, layers + fit-up + back gouge */
 export function hoursPerMetre(
   t: number,
+  prep: JointPrep,
   gouge: GougeMethod,
   layers: WeldLayer[],
   s: WeldSettings,
 ): number {
   const weld = layers.reduce((a, l) => a + l.hoursPerM, 0);
+  // a double V is gouged back to the root of the first side, roughly half the plate
+  const depth = prep === "Double V" ? t / 2 : t;
   const gougeH =
     gouge === "Manual grinding"
-      ? (t / 10) * s.manualGougeRate
+      ? (depth / 10) * s.manualGougeRate
       : gouge === "Machine grinding"
-        ? (t / 10) * s.machineGougeRate
+        ? (depth / 10) * s.machineGougeRate
         : 0;
   return weld + s.fitUp + gougeH;
 }
@@ -320,7 +330,7 @@ export function weldSchedule(eq: Equipment, items: BomItem[], rates: RateBook): 
     const prep = fam.groove ? jointPrep(t, s) : "Square";
     const gouge = fam.groove ? gougeFor(eq, t, prep, s) : "None";
     const layers = weldLayers(t, prep, s, fam.groove);
-    const hpm = hoursPerMetre(t, gouge, layers, s);
+    const hpm = hoursPerMetre(t, prep, gouge, layers, s);
     rows.push({
       key: `${eq.id}-${it.partKey}-${it.itemCode}`,
       equipmentId: eq.id,
@@ -338,7 +348,10 @@ export function weldSchedule(eq: Equipment, items: BomItem[], rates: RateBook): 
       hoursPerM: hpm,
       hours: hpm * metres,
       cost: hpm * metres * s.shopRate,
-      note: fam.note,
+      note:
+        prep === "Double V"
+          ? `${fam.note} · root welded from the inside, back-gouged, then welded from the outside`
+          : fam.note,
     });
   }
 
@@ -351,7 +364,7 @@ export function weldSchedule(eq: Equipment, items: BomItem[], rates: RateBook): 
       const prep = "Square";
       const layers = weldLayers(t, "Square", s, false);
       const handling = d.tubesTotal * 2 * 0.06; // roll + tack + weld per end
-      const hpm = hoursPerMetre(t, "None", layers, s);
+      const hpm = hoursPerMetre(t, "Square", "None", layers, s);
       rows.push({
         key: `${eq.id}-tube-weld`,
         equipmentId: eq.id,

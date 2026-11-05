@@ -128,6 +128,38 @@ export interface RateBook {
 // ---------------------------------------------------------------------------
 
 export type WeldProcess = "GTAW" | "SMAW" | "SAW" | "FCAW";
+
+// ---------------------------------------------------------------------------
+// Cross-country procurement & delivery basis
+// ---------------------------------------------------------------------------
+
+export interface LogisticsSettings {
+  /** client destination country */
+  destination: string;
+  /** origin used for any BOQ line without its own selection */
+  defaultOrigin: string;
+  incoterm: "EXW" | "FOB" | "CIF" | "DAP" | "DDP";
+  /** marine / transit insurance, % of material + freight */
+  insurancePct: number;
+  /** force one import duty rate; null uses the destination tariff */
+  dutyOverridePct: number | null;
+  /** road freight, BHD per tonne-km */
+  landRate: number;
+  /** multiplier on the lane sea-freight benchmark */
+  seaRateFactor: number;
+  /** port handling / THC, BHD per tonne */
+  portHandling: number;
+  /** customs clearing per shipment, BHD */
+  clearance: number;
+  /** extra documentation per shipment, BHD */
+  documentation: number;
+  /** bunker / fuel surcharge, % of freight */
+  fuelPct: number;
+  /** export packing & crating, % of material value */
+  packingPct: number;
+  /** abnormal / oversize load surcharge, % */
+  abnormalLoadPct: number;
+}
 export type JointPrep = "Single V" | "Double V" | "Square";
 export type GougeMethod = "None" | "Manual grinding" | "Machine grinding";
 export type GougeSelect = "Auto" | "Manual grinding" | "Machine grinding";

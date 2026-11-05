@@ -172,9 +172,10 @@ export default function WeldingPage() {
           </div>
           <div className="divider" />
           <div className="small dim">
-            Auto back-gouging: shells below Ø{w.gougeAutoDia} mm are hand-ground, at or above it the shop
-            machine-grinds. Double V joints (above {w.doubleVThreshold} mm) need no back gouge; square
-            square-groove fillets and thin plate are excluded.
+            Every double V joint (above {w.doubleVThreshold} mm) is welded from the inside, back-gouged to
+            sound metal and only then welded from the outside. Single V joints are back-gouged the same way
+            above 8 mm; square-groove fillets and thin plate are not gouged. Shells below Ø{w.gougeAutoDia} mm
+            are hand-ground, at or above it the shop machine-grinds — or force one method above.
           </div>
         </div>
       </div>
