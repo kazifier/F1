@@ -89,8 +89,18 @@ function ExchangerDesignPanel({
           <ExchangerViewer3D tag={eq.tag} name={eq.name} spec={spec} design={d} nozzles={nozzles} />
         </div>
         <div className="est-note">
-          Drag to orbit, scroll to zoom. <b>Section</b> opens the shell so the bundle, baffles and tubesheets show;{" "}
-          the nozzle necks and flanges are placed from the exchanger nozzle schedule ({nozzles.length} openings).
+          Drag to orbit, scroll to zoom.{" "}
+          {d.kind === "fired-heater" ? (
+            <>
+              <b>Section</b> opens the casing so the coil and burners show; the stack, burners and coil are sized
+              from the API 560 heater sheet.
+            </>
+          ) : (
+            <>
+              <b>Section</b> opens the shell so the bundle, baffles and tubesheets show; the nozzle necks and
+              flanges are placed from the exchanger nozzle schedule ({nozzles.length} openings).
+            </>
+          )}
         </div>
       </div>
 
