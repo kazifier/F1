@@ -449,10 +449,17 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "vessel-estimator-v1",
-      version: 5,
+      version: 6,
       migrate: (persisted: unknown, version: number) => {
         const s = persisted as { equipment?: Equipment[] } & Record<string, unknown>;
         // v3: rate book moved from INR benchmarks to BHD, currency is now a display setting
+        // v6: the workshop is in Bahrain, so Bahrain is the default supply country
+        if (version < 6) {
+          const st = s as { logistics?: { defaultOrigin?: string }; sourcing?: unknown };
+          if (st.logistics) st.logistics.defaultOrigin = "Bahrain";
+          else st.logistics = { ...DEFAULT_LOGISTICS };
+          st.sourcing = {};
+        }
         // v5: procurement / delivery basis and per-line sourcing added
         if (version < 5) {
           const st = s as { logistics?: unknown; sourcing?: unknown };

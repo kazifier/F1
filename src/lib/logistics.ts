@@ -92,7 +92,7 @@ export const DESTINATIONS: Destination[] = [
 
 export const DEFAULT_LOGISTICS: LogisticsSettings = {
   destination: "Bahrain",
-  defaultOrigin: "India",
+  defaultOrigin: "Bahrain",
   incoterm: "CIF",
   insurancePct: 0.35,
   dutyOverridePct: null,
@@ -581,6 +581,34 @@ export function shipmentPlan(
   }
 
   const rows = [...imports.values()];
+
+  // material bought in Bahrain never clears customs, but it still moves to Sitra
+  const localEntries = entries.filter((e) => e.breakdown.origin === home.name);
+  if (localEntries.length) {
+    const w = localEntries.reduce((a, e) => a + e.line.weight, 0);
+    const localRow: ShipmentLine = {
+      leg: "Import",
+      origin: "Bahrain (local supply)",
+      mode: "Road (domestic)",
+      packing: "Mill / stockist delivery to the workshop",
+      weight: w,
+      volume: w / 2200,
+      containers: "Road",
+      freight: localEntries.reduce((a, e) => a + e.breakdown.importFreight, 0),
+      handling: 0,
+      packingCost: 0,
+      duty: 0,
+      insurance: localEntries.reduce((a, e) => a + e.breakdown.insurance / 2, 0),
+      surcharge: 0,
+      clearance: 0,
+      docs: 0,
+      lines: localEntries.length,
+      subtotal: 0,
+      note: "Direct purchase in Bahrain — no customs entry, short internal haul to Sitra",
+    };
+    localRow.subtotal = localRow.freight + localRow.handling + localRow.packingCost + localRow.duty + localRow.insurance + localRow.surcharge + localRow.clearance + localRow.docs;
+    rows.push(localRow);
+  }
 
   const importVolume = rows.reduce((a, r) => a + r.volume, 0);
   const exportFreight = entries.reduce((a, e) => a + e.breakdown.exportFreight, 0);

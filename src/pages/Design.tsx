@@ -6,6 +6,7 @@ import { allowableStress, materialByName, pipeOd, pipeWall, yieldStress } from "
 import { defaultExchangerNozzles, designExchanger, flangeClassFor } from "../lib/tema";
 import { exchangerComponents } from "../lib/exchangerParts";
 import VesselViewer3D, { type NozzleSpec } from "../components/VesselViewer3D";
+import ExchangerViewer3D from "../components/ExchangerViewer3D";
 
 /** TEMA / ASME exchanger design panel — replaces the vessel sheet for exchangers */
 function ExchangerDesignPanel({
@@ -74,6 +75,24 @@ function ExchangerDesignPanel({
           <Kpi k="Stack" v={`Ø${heater.stackDia} mm`} n={`${(heater.stackHeight / 1000).toFixed(1)} m high`} />
         </div>
       )}
+
+      <div className="card">
+        <div className="card-head">
+          <h3>3D model — {eq.tag}</h3>
+          <span className="hint">
+            {d.kind === "fired-heater"
+              ? `fired heater · ${d.heater?.coilTubes ?? 0} coil tubes · Ø${d.heater?.stackDia ?? 0} mm stack`
+              : `${spec.tema} · ${d.shellId} mm ID × ${fmt(spec.tubeLength / 1000, 1)} m · ${d.tubesTotal} tubes`}
+          </span>
+        </div>
+        <div className="card-body tight" style={{ height: 520 }}>
+          <ExchangerViewer3D tag={eq.tag} name={eq.name} spec={spec} design={d} nozzles={nozzles} />
+        </div>
+        <div className="est-note">
+          Drag to orbit, scroll to zoom. <b>Section</b> opens the shell so the bundle, baffles and tubesheets show;{" "}
+          the nozzle necks and flanges are placed from the exchanger nozzle schedule ({nozzles.length} openings).
+        </div>
+      </div>
 
       <div className="card">
         <div className="card-head">
