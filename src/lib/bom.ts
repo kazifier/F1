@@ -5,6 +5,7 @@ import type { Equipment, PartRow, RateBook } from "./types";
 import { materialByName, pipeOd, pipeWall, flangeMass, studSpec, MATERIALS, type StudSpec } from "./catalog";
 import { PART_BY_KEY } from "./parts";
 import { buildExchangerBom } from "./exchangerParts";
+import { DEFAULT_WELD, weldSummary } from "./welding";
 
 // All rates are in BHD (the facility currency). Every amount in the app is a
 // net price — Bahrain VAT is never added to a total.
@@ -27,6 +28,7 @@ export const DEFAULT_RATES: RateBook = {
   plateUtilisation: 0.82,
   plateWidth: 1250,
   plateLength: 2500,
+  weld: { ...DEFAULT_WELD },
 };
 
 export type ItemCategory =
@@ -124,8 +126,8 @@ const nutMass = (spec: StudSpec, density: number) =>
 // Main take-off for one equipment
 // ---------------------------------------------------------------------------
 export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
-  // shell & tube exchangers have their own TEMA/ASME sheet, not the vessel parts
-  if (/exchanger/i.test(eq.type)) return buildExchangerBom(eq, rates);
+  // shell & tube exchangers / fired heaters have their own TEMA/API sheet
+  if (eq.he || /exchanger|fired heater/i.test(eq.type)) return buildExchangerBom(eq, rates);
   const items: BomItem[] = [];
   const push = (p: Omit<BomItem, "uid" | "equipmentId" | "equipmentTag" | "equipmentName" | "amount">) => {
     const mRate = rates.materialRate[p.material] ?? materialByName(p.material).rate;
@@ -564,14 +566,16 @@ export function rollupCost(eq: Equipment, items: BomItem[], rates: RateBook): Co
   const isSS = items.some((i) => materialByName(i.material).ss);
   const fabrication = weight * (isSS ? rates.fabricationSsf : rates.fabricationCmf);
   const weldLength = items.reduce((a, i) => a + (i.weldLength ?? 0), 0);
-  const welding = weldLength * rates.weldingRate;
+  // welding is priced from the weld schedule: layers × manhours × shop rate
+  const welding = weldSummary(eq, items, rates);
+  const weldingCost = welding.cost;
   const testing = weldLength * rates.testingRate * (eq.radiography === "Full RT" ? 1.6 : eq.radiography === "Spot RT" ? 1 : 0.55);
   const pwht = eq.pWHT === "Yes" ? weight * rates.pwhtRate : 0;
   const surface = estimateSurface(eq, items);
   const painting = eq.paintSystem === "None" ? 0 : surface * rates.paintingRate;
   const insThk = String(eq.insulationThk);
   const insulation = eq.insulationThk > 0 ? surface * (rates.insulationRate[insThk] ?? rates.insulationRate["50"]) : 0;
-  const direct = materialCost + fabrication + welding + testing + pwht + painting + insulation;
+  const direct = materialCost + fabrication + weldingCost + testing + pwht + painting + insulation;
   const overhead = (direct * rates.overheadPct) / 100;
   const profit = ((direct + overhead) * rates.profitPct) / 100;
   const freight = ((direct + overhead + profit) * rates.freightPct) / 100;
@@ -579,7 +583,7 @@ export function rollupCost(eq: Equipment, items: BomItem[], rates: RateBook): Co
   const vat = (total * rates.vatPct) / 100;
   return {
     material: materialCost,
-    fabrication, welding, testing, pwht, painting, insulation, direct,
+    fabrication, welding: weldingCost, testing, pwht, painting, insulation, direct,
     overhead, profit, freight, total, vat, grand: total, weight,
   };
 }

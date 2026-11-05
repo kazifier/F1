@@ -1,15 +1,26 @@
 // ---------------------------------------------------------------------------
 // Heat exchanger part sheet + BOM.
 //
-// One place that turns the TEMA/ASME design (./tema) into the 20 procurement
-// components the legacy BOQ carries for a shell & tube exchanger, with quantity,
-// unit, weight, weld length and the code clause each line comes from.
+// One place that turns the TEMA/ASME design (./tema) into the procurement
+// components the BOQ carries for a shell & tube exchanger, with quantity, unit,
+// weight, weld length and the code clause each line comes from.
+//
+// Three mechanical families are handled:
+//   shell-tube / bayonet  the 20-row TEMA component sheet
+//   kettle                K shell — the shell line carries the enlarged kettle
+//   fired-heater          coil, casing, refractory, burners, stack (API 560)
 // ---------------------------------------------------------------------------
 
 import type { BomItem, ItemCategory } from "./bom";
 import { materialByName } from "./catalog";
-import { flangeClass, designExchanger, type ExchangerDesign, type ExchangerSpec } from "./tema";
-import type { Equipment, RateBook } from "./types";
+import {
+  defaultExchangerNozzles,
+  designExchanger,
+  flangeClassFor,
+  type ExchangerDesign,
+  type ExchangerSpec,
+} from "./tema";
+import type { Equipment, HeNozzleRow, RateBook } from "./types";
 import type { ExchangerUnit } from "../data/exchangers";
 
 export interface HeComponent {
@@ -51,24 +62,43 @@ export const HE_COMPONENTS = [
 ] as const;
 export type HeComponentName = (typeof HE_COMPONENTS)[number];
 
+/** fired heater sheet — replaces the TEMA components for kind = fired-heater */
+export const HEATER_COMPONENTS = [
+  "Radiant coil tubes",
+  "Return bends",
+  "Tube supports",
+  "Radiant casing",
+  "Refractory lining",
+  "Convection coil",
+  "Convection casing",
+  "Burners",
+  "Stack & breeching",
+  "Air preheater",
+  "Coil guides",
+  "Ladders & platforms",
+] as const;
+
 const mmToM = (v: number) => v / 1000;
 
 /** kg for a plate of area (m²) and thickness (mm) */
 const plateKg = (areaM2: number, thk: number, mat: string) =>
   areaM2 * mmToM(thk) * (materialByName(mat).density || 7850);
 
-/** the 20-row component sheet for one exchanger */
+/** the component sheet for one exchanger, whichever family it belongs to */
 export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): HeComponent[] {
   const spec = eq.he;
   if (!spec) return [];
   const d = design ?? designExchanger(spec);
+  if (d.kind === "fired-heater") return heaterComponents(eq, d);
   const shells = d.spec.shells;
   const fixed = d.fixedTubesheet;
-  const rating = flangeClass(Math.max(spec.shellPressure, spec.tubePressure));
+  const bayonet = d.kind === "bayonet";
+  const rating = flangeClassFor(Math.max(spec.shellPressure, spec.tubePressure), Math.max(spec.shellTemp, spec.tubeTemp));
   const D = d.shellId;
   const L = spec.tubeLength;
   const headArea = 1.084 * Math.pow(mmToM(D), 2);
   const extra = (name: string) => Number(eq.heExtras?.[name]?.qty) || 0;
+  const nozzles = eq.heNozzles ?? defaultExchangerNozzles(spec, d);
 
   const shellW = d.weights.shell * shells;
   const channelW = d.weights.channel * shells;
@@ -93,7 +123,10 @@ export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): He
       material: spec.shellMat,
       thickness: d.shellThk,
       derived: true,
-      detail: `Ø${D} × ${d.shellThk} mm × ${L} mm long, TEMA shell type ${spec.tema[1] ?? "E"}`,
+      detail:
+        d.kind === "kettle"
+          ? `Kettle shell Ø${D} × ${d.shellThk} mm — enlarged over the ${Math.round(d.bundleDia)} mm bundle for vapour disengagement`
+          : `Ø${D} × ${d.shellThk} mm × ${L} mm long, TEMA shell type ${spec.tema[1] ?? "E"}`,
     },
     {
       key: "Shell cover",
@@ -151,14 +184,14 @@ export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): He
       key: "Tubes",
       label: "Tubes",
       unit: "no",
-      qty: d.tubesTotal,
+      qty: d.tubesTotal * (bayonet ? 2 : 1),
       weight: tubesW,
       weld: 0,
       category: "Pipe",
       material: spec.tubeMat,
       thickness: spec.tubeThk,
       derived: true,
-      detail: `${spec.tubeOd} OD × ${spec.tubeThk} mm × ${mmToM(L).toFixed(2)} m, ${spec.pattern}° ${spec.pitch} mm pitch, ${spec.tubePasses} pass`,
+      detail: `${spec.tubeOd} OD × ${spec.tubeThk} mm × ${mmToM(bayonet ? L * 2 : L).toFixed(2)} m, ${spec.pattern}° ${spec.pitch} mm pitch, ${spec.tubePasses} pass${bayonet ? " — bayonet element, two legs per tube" : ""}`,
     },
     {
       key: "Stationary tubesheet",
@@ -166,33 +199,37 @@ export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): He
       unit: "no",
       qty: shells,
       weight: tsW / 2,
-      weld: 0,
+      weld: shells * 1.5,
       category: "Plate",
       material: spec.tubesheetMat,
       thickness: d.tubesheetThk,
       derived: true,
-      detail: `${d.tubesheetThk} mm per TEMA RCB-7.2`,
+      detail: `${d.tubesheetThk} mm — TEMA RCB-7.2 ${d.tubesheetTema.toFixed(1)} / UG-34 ${d.tubesheetUg34.toFixed(1)} mm`,
     },
     {
       key: "Floating tubesheet",
       label: "Floating tubesheet",
       unit: "no",
-      qty: fixed ? 0 : shells,
-      weight: fixed ? 0 : tsW / 2,
+      qty: fixed || bayonet ? 0 : shells,
+      weight: fixed || bayonet ? 0 : tsW / 2,
       weld: 0,
       category: "Plate",
       material: spec.tubesheetMat,
       thickness: d.tubesheetThk,
       derived: true,
-      detail: fixed ? "not applicable — fixed tubesheet (TEMA M/N)" : `${d.tubesheetThk} mm, floating head`,
+      detail: fixed
+        ? "not applicable — fixed tubesheet (TEMA M/N)"
+        : bayonet
+          ? "not applicable — bayonet tubes, one tubesheet"
+          : `${d.tubesheetThk} mm, floating head`,
     },
     {
       key: "Floating head cover",
       label: "Floating head cover",
       unit: "no",
-      qty: fixed ? 0 : shells,
-      weight: fixed ? 0 : plateKg(headArea * 0.55, d.headThk, spec.shellMat) * shells,
-      weld: fixed ? 0 : shells * Math.PI * mmToM(D + 40),
+      qty: fixed || bayonet ? 0 : shells,
+      weight: fixed || bayonet ? 0 : plateKg(headArea * 0.55, d.headThk, spec.shellMat) * shells,
+      weld: fixed || bayonet ? 0 : shells * Math.PI * mmToM(D + 40),
       category: "Plate",
       material: spec.shellMat,
       thickness: d.headThk,
@@ -253,13 +290,13 @@ export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): He
       key: "Nozzles",
       label: "Nozzles",
       unit: "no",
-      qty: 6 * shells,
+      qty: nozzles.reduce((a, n) => a + n.qty, 0) * shells,
       weight: nozzleW,
-      weld: shells * 6 * 0.55,
+      weld: shells * nozzles.reduce((a, n) => a + n.qty, 0) * 0.55,
       category: "Pipe",
       material: spec.shellMat,
       derived: true,
-      detail: `2 shell / 2 channel / vent + drain, ${rating}, with flanges, gaskets and bolting`,
+      detail: `${nozzles.length} marks (${nozzles.map((n) => n.mark).join(", ")}) at ${rating}, TEMA RG-6.4 sizes`,
     },
     {
       key: "Saddle supports",
@@ -352,6 +389,176 @@ export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): He
   }));
 }
 
+/** API 560 fired heater sheet — coil, casing, refractory, burners, stack */
+function heaterComponents(eq: Equipment, d: ExchangerDesign): HeComponent[] {
+  const spec = eq.he!;
+  const h = d.heater!;
+  const extra = (name: string) => Number(eq.heExtras?.[name]?.qty) || 0;
+  const casingT = 6;
+  const casingKg = plateKg(h.casingArea, casingT, "SA-516 Gr.70");
+  const refractoryKg = h.refractoryArea * 0.075 * 2200; // 75 mm ceramic fibre blanket
+  const convectionTubes = Math.max(8, Math.round(h.coilTubes * 0.28));
+  const convectionKg =
+    convectionTubes * Math.PI * mmToM(spec.tubeOd - h.coilWall) * mmToM(h.coilWall) * mmToM(h.tubeLength) * 7850;
+
+  const rows: Array<HeComponent> = [
+    {
+      key: "Radiant coil tubes",
+      label: "Radiant coil tubes",
+      unit: "no",
+      qty: h.coilTubes,
+      weight: h.coilWeight,
+      weld: h.coilTubes * Math.PI * mmToM(spec.tubeOd) * 2,
+      category: "Pipe",
+      material: spec.tubeMat,
+      thickness: h.coilWall,
+      derived: true,
+      detail: `${spec.tubeOd} OD × ${h.coilWall.toFixed(1)} mm, ${mmToM(h.tubeLength).toFixed(2)} m per tube, API 560 coil`,
+    },
+    {
+      key: "Return bends",
+      label: "Return bends",
+      unit: "no",
+      qty: h.returnBends,
+      weight: h.returnBends * 4.5,
+      weld: h.returnBends * 2 * Math.PI * mmToM(spec.tubeOd),
+      category: "Fitting",
+      material: spec.tubeMat,
+      thickness: h.coilWall,
+      derived: true,
+      detail: `180° forged return bends, ${h.coilWall.toFixed(1)} mm wall, welded to the coil`,
+    },
+    {
+      key: "Tube supports",
+      label: "Tube supports",
+      unit: "no",
+      qty: Math.max(6, Math.round(h.tubeLength / 1500) * 2),
+      weight: 0.35 * Math.max(6, Math.round(h.tubeLength / 1500) * 2) * 60,
+      weld: Math.max(6, Math.round(h.tubeLength / 1500) * 2) * 1.6,
+      category: "Structure",
+      material: "SA-240 Gr.304",
+      thickness: 12,
+      derived: true,
+      detail: "Cast / fabricated tube supports on 1.5 m pitch",
+    },
+    {
+      key: "Radiant casing",
+      label: "Radiant casing",
+      unit: "m²",
+      qty: Math.round(h.casingArea),
+      weight: casingKg,
+      weld: h.casingArea * 4,
+      category: "Plate",
+      material: "SA-516 Gr.70",
+      thickness: casingT,
+      derived: true,
+      detail: `${Math.round(h.casingArea)} m² of ${casingT} mm casing plate with stiffeners`,
+    },
+    {
+      key: "Refractory lining",
+      label: "Refractory lining",
+      unit: "m²",
+      qty: Math.round(h.refractoryArea),
+      weight: refractoryKg,
+      weld: 0,
+      category: "Consumable",
+      material: "Ceramic fibre 75 mm",
+      thickness: 75,
+      derived: true,
+      detail: `${Math.round(h.refractoryArea)} m² of 75 mm ceramic fibre + castable at the burner throat`,
+    },
+    {
+      key: "Convection coil",
+      label: "Convection coil",
+      unit: "no",
+      qty: convectionTubes,
+      weight: convectionKg,
+      weld: convectionTubes * Math.PI * mmToM(spec.tubeOd) * 2,
+      category: "Pipe",
+      material: spec.tubeMat,
+      thickness: h.coilWall,
+      derived: true,
+      detail: `${convectionTubes} bare / studded convection tubes, ${mmToM(h.tubeLength).toFixed(2)} m`,
+    },
+    {
+      key: "Convection casing",
+      label: "Convection casing",
+      unit: "m²",
+      qty: Math.round(h.casingArea * 0.4),
+      weight: casingKg * 0.4,
+      weld: h.casingArea * 1.6,
+      category: "Plate",
+      material: "SA-516 Gr.70",
+      thickness: casingT,
+      derived: true,
+      detail: "Convection section casing and transition duct",
+    },
+    {
+      key: "Burners",
+      label: "Burners",
+      unit: "no",
+      qty: h.burners + extra("Burners"),
+      weight: (h.burners + extra("Burners")) * 180,
+      weld: 0,
+      category: "Fitting",
+      material: "Burner assembly",
+      derived: true,
+      detail: `${h.burners} × ${Math.round(h.burnerDuty)} kW forced-draft burners (API 560)`,
+    },
+    {
+      key: "Stack & breeching",
+      label: "Stack & breeching",
+      unit: "no",
+      qty: 1,
+      weight: plateKg(Math.PI * mmToM(h.stackDia) * mmToM(h.stackHeight), 6, "SA-516 Gr.70") + 900,
+      weld: 2 * Math.PI * mmToM(h.stackDia) * 3,
+      category: "Plate",
+      material: "SA-516 Gr.70",
+      thickness: 6,
+      derived: true,
+      detail: `Ø${h.stackDia} mm stack, ${(h.stackHeight / 1000).toFixed(1)} m with breeching and damper`,
+    },
+    {
+      key: "Air preheater",
+      label: "Air preheater",
+      unit: "no",
+      qty: extra("Air preheater"),
+      weight: 0,
+      weld: 0,
+      category: "Fitting",
+      material: "Air preheater",
+      derived: false,
+      detail: "estimator input — add when the specification calls for flue-gas heat recovery",
+    },
+    {
+      key: "Coil guides",
+      label: "Coil guides",
+      unit: "no",
+      qty: Math.max(4, Math.round(h.coilTubes / 12)),
+      weight: Math.max(4, Math.round(h.coilTubes / 12)) * 22,
+      weld: Math.max(4, Math.round(h.coilTubes / 12)) * 0.9,
+      category: "Structure",
+      material: "IS 2062 E250",
+      derived: true,
+      detail: "Coil guide clips and end supports",
+    },
+    {
+      key: "Ladders & platforms",
+      label: "Ladders & platforms",
+      unit: "no",
+      qty: extra("Ladders & platforms"),
+      weight: 0,
+      weld: 0,
+      category: "Structure",
+      material: "IS 2062 E250",
+      derived: false,
+      detail: "estimator input — burner access and stack platform",
+    },
+  ];
+
+  return rows;
+}
+
 /** BOM lines for one exchanger, priced with the project rate book */
 export function buildExchangerBom(eq: Equipment, rates: RateBook): BomItem[] {
   if (!eq.he) return [];
@@ -360,14 +567,15 @@ export function buildExchangerBom(eq: Equipment, rates: RateBook): BomItem[] {
   const items: BomItem[] = [];
   for (const c of components) {
     if (c.qty <= 0 || c.weight <= 0) continue;
-    const rate =
-      rates.materialRate[c.material] ?? materialByName(c.material).rate;
+    const rate = rates.materialRate[c.material] ?? materialByName(c.material).rate;
     const surfaceArea =
-      c.key === "Shell"
+      c.key === "Shell" || c.key === "Shell cover"
         ? Math.PI * mmToM(design.shellId) * mmToM(eq.he.tubeLength) * eq.he.shells
         : c.key === "Channel shell"
           ? Math.PI * mmToM(design.shellId) * 0.55 * mmToM(design.shellId) * eq.he.shells
-          : undefined;
+          : c.key === "Radiant casing" || c.key === "Convection casing"
+            ? c.qty
+            : undefined;
     items.push({
       uid: `${eq.id}-${c.key}`,
       equipmentId: eq.id,
@@ -396,6 +604,7 @@ export function buildExchangerBom(eq: Equipment, rates: RateBook): BomItem[] {
 export function exchangerToEquipment(u: ExchangerUnit): Equipment {
   const spec: ExchangerSpec = {
     tema: u.tema,
+    kind: u.kind,
     shells: u.shells,
     surfaceM2: u.surfaceM2,
     tubeOd: u.tubeOd,
@@ -418,15 +627,16 @@ export function exchangerToEquipment(u: ExchangerUnit): Equipment {
     insulated: u.insulated,
   };
   const design = designExchanger(spec);
+  const nozzles: HeNozzleRow[] = defaultExchangerNozzles(spec, design);
   // built by hand rather than newEquipment(): an exchanger has its own sheet
   const eq: Equipment = {
     id: `he-${u.tag}`,
-    type: "Heat Exchanger",
+    type: u.kind === "fired-heater" ? "Fired Heater" : "Heat Exchanger",
     tag: u.tag,
     name: u.name,
     service: u.service,
     qty: 1,
-    orientation: "Horizontal",
+    orientation: u.tubeLength > 10000 ? "Vertical" : "Horizontal",
     diameter: design.shellId,
     ttLength: u.tubeLength,
     shellThk: design.shellThk,
@@ -444,6 +654,7 @@ export function exchangerToEquipment(u: ExchangerUnit): Equipment {
     parts: {},
     he: spec,
     heExtras: {},
+    heNozzles: nozzles,
   };
   return eq;
 }

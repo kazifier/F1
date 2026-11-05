@@ -111,6 +111,14 @@ export function ExchangerBasis({ eq }: { eq: Equipment }) {
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
         {sel("TEMA type", spec.tema, TEMA_TYPES, (v) => upd({ tema: v }))}
+        {
+          sel(
+            "Mechanical family",
+            spec.kind ?? "shell-tube",
+            ["shell-tube", "kettle", "bayonet", "fired-heater"],
+            (v) => upd({ kind: v as typeof spec.kind }),
+          )
+        }
         {num("Shells / unit", spec.shells, (v) => upd({ shells: Math.max(1, Math.round(v)) }), "no")}
         {num("Required surface", spec.surfaceM2, (v) => upd({ surfaceM2: Math.max(1, v) }), "m²", 10, 110)}
         {num("Tube OD", spec.tubeOd, (v) => upd({ tubeOd: v }), "mm", 0.05)}
@@ -143,6 +151,21 @@ export function ExchangerBasis({ eq }: { eq: Equipment }) {
         <span>Design result — TEMA {design.spec.tema} · {flangeClass(Math.max(spec.shellPressure, spec.tubePressure))} joints</span>
         <span>{fmt(design.surfaceTotal, 0)} m²</span>
       </div>
+      {design.kind === "fired-heater" && design.heater && (
+        <div className="lg-note" style={{ color: "#8b0000" }}>
+          Fired heater, not a TEMA tubesheet item: {design.heater.coilTubes} coil tubes at{" "}
+          {design.heater.coilWall.toFixed(1)} mm wall, {Math.round(design.heater.dutyKW)} kW absorbed at{" "}
+          {design.heater.flux} kW/m², {design.heater.burners} burner(s), Ø{design.heater.stackDia} mm stack —
+          API 560 and ASME VIII-1 coil checks in step 6.
+        </div>
+      )}
+      {design.kind === "kettle" && (
+        <div className="lg-note" style={{ color: "#8b0000" }}>
+          Kettle reboiler: the shell is enlarged to Ø{design.shellId} mm over the{" "}
+          {Math.round(design.bundleDia)} mm bundle so vapour can disengage above the tube bundle.
+        </div>
+      )}
+      {design.kind !== "fired-heater" && (
       <div className="lg-note">
         Shell ID {design.shellId} mm · {design.tubesTotal} tubes ({design.tubeCount} per shell ×{" "}
         {design.spec.shells}) · shell {design.shellThk} mm · channel {design.channelThk} mm · heads{" "}
@@ -156,6 +179,7 @@ export function ExchangerBasis({ eq }: { eq: Equipment }) {
           </span>
         )}
       </div>
+      )}
     </div>
   );
 }

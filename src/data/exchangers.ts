@@ -16,7 +16,7 @@
 // tubesheet, tubes, baffles, bundle weight) is calculated by ./tema from it.
 // ---------------------------------------------------------------------------
 
-import type { TubePattern } from "../lib/tema";
+import type { ExchangerKind, TubePattern } from "../lib/tema";
 
 export type ExchangerGroup = "NHT" | "PAR ISOM" | "FBP";
 
@@ -27,6 +27,8 @@ export interface ExchangerUnit {
   service: string;
   /** TEMA designation: front head / shell / rear head */
   tema: string;
+  /** mechanical family — kettle reboilers and the fired heater are not plain E shells */
+  kind: ExchangerKind;
   /** shells working in parallel for the item */
   shells: number;
   /** required effective surface per unit, m² */
@@ -99,6 +101,8 @@ const build = (group: ExchangerGroup, rows: Row[]): ExchangerUnit[] =>
     tag,
     name,
     tema,
+    // K in the second position is the kettle shell — it is not an E shell
+    kind: (tema[1]?.toUpperCase() === "K" ? "kettle" : "shell-tube") as ExchangerKind,
     service: name,
     surfaceM2,
     pShell,
@@ -144,6 +148,7 @@ const FBP: ExchangerUnit[] = build("FBP", [
     {
       tubeLength: 22000,
       shells: 1,
+      kind: "bayonet",
       shellMat: CRMO,
       tubeMat: "SA-213 T11",
       tubesheetMat: CRMO,
@@ -197,7 +202,10 @@ const PAR: ExchangerUnit[] = build("PAR ISOM", [
       tubeThk: 2.77,
       pitch: 32,
       pattern: "90",
-      notes: ["Multitube (hairpin) exchanger per UOP Std 4-12 — separated head closures."],
+      kind: "fired-heater",
+      notes: [
+        "Fired heater: charge heater coil, not a TEMA tubesheet item — sheet and checks follow API 560 + ASME VIII-1 for the coil.",
+      ],
     },
   ],
   ["11-E04", "Product Trim Condenser", "AEU", 380, 19, 200, 19, 180],

@@ -559,6 +559,7 @@ export const EQUIPMENT_TYPES = [
   "Pressure Vessel",
   "Column / Tower",
   "Heat Exchanger",
+  "Fired Heater",
   "Storage Tank",
   "Reactor",
   "Separator",

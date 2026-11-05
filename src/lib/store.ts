@@ -5,7 +5,8 @@ import { DEFAULT_RATES } from "./bom";
 import { PART_DEFS, PART_BY_KEY, defaultRow } from "./parts";
 import { applyHeaderDefaults } from "./autofill";
 import { BASE_CURRENCY, formatMoney, getCurrency } from "./currency";
-import { DEFAULT_EXCHANGER_SPEC } from "./tema";
+import { DEFAULT_EXCHANGER_SPEC, defaultExchangerNozzles } from "./tema";
+import { DEFAULT_WELD } from "./welding";
 
 let seq = 1;
 const uid = (p = "eq") => `${p}-${Date.now().toString(36)}-${(seq++).toString(36)}`;
@@ -43,7 +44,7 @@ export function newEquipment(type = "Pressure Vessel", tag = "", name = ""): Equ
     paintSystem: "Epoxy 2 coat",
     parts: starterParts(),
   };
-  if (/exchanger/i.test(eq.type)) {
+  if (/exchanger|fired heater/i.test(eq.type)) {
     // an exchanger is estimated from its TEMA/ASME design basis, not vessel parts
     const he = { ...DEFAULT_EXCHANGER_SPEC };
     return { ...eq, parts: {}, he, heExtras: {} };
@@ -245,6 +246,12 @@ export interface AppState {
   setHeExtra: (id: string, component: string, field: "qty" | "amount", value: string) => void;
   /** edit the exchanger design basis and re-derive its sheet */
   setHeSpec: (id: string, patch: Partial<import("./tema").ExchangerSpec>) => void;
+  /** edit one exchanger nozzle and re-price the nozzle line */
+  setHeNozzle: (id: string, mark: string, patch: Partial<import("./types").HeNozzleRow>) => void;
+  addHeNozzle: (id: string) => void;
+  removeHeNozzle: (id: string, mark: string) => void;
+  /** restore the TEMA RG-6.4 generated nozzle schedule */
+  resetHeNozzles: (id: string) => void;
   removeEquipment: (id: string) => void;
   updateEquipment: (id: string, patch: Partial<Equipment>) => void;
   /** re-derive the whole part sheet from the equipment header */
@@ -317,8 +324,56 @@ export const useStore = create<AppState>()(
             if (e.id !== id || !e.he) return e;
             const he = { ...e.he, ...patch };
             // the header mirrors the design so the rest of the app stays consistent
-            return { ...e, he };
+            return { ...e, he, heNozzles: e.heNozzles ?? defaultExchangerNozzles(he) };
           }),
+        }),
+      setHeNozzle: (id, mark, patch) =>
+        set({
+          equipment: get().equipment.map((e) => {
+            if (e.id !== id || !e.he) return e;
+            const rows = e.heNozzles ?? defaultExchangerNozzles(e.he);
+            return {
+              ...e,
+              heNozzles: rows.map((r) => (r.mark === mark ? { ...r, ...patch } : r)),
+            };
+          }),
+        }),
+      addHeNozzle: (id) =>
+        set({
+          equipment: get().equipment.map((e) => {
+            if (e.id !== id || !e.he) return e;
+            const rows = e.heNozzles ?? defaultExchangerNozzles(e.he);
+            const next = `N${rows.length + 1}`;
+            return {
+              ...e,
+              heNozzles: [
+                ...rows,
+                {
+                  mark: next,
+                  service: "Spare / future",
+                  nps: '2"',
+                  qty: 1,
+                  pressure: e.he.shellPressure,
+                  temperature: e.he.shellTemp,
+                  shellSide: true,
+                },
+              ],
+            };
+          }),
+        }),
+      removeHeNozzle: (id, mark) =>
+        set({
+          equipment: get().equipment.map((e) => {
+            if (e.id !== id || !e.he) return e;
+            const rows = e.heNozzles ?? defaultExchangerNozzles(e.he);
+            return { ...e, heNozzles: rows.filter((r) => r.mark !== mark) };
+          }),
+        }),
+      resetHeNozzles: (id) =>
+        set({
+          equipment: get().equipment.map((e) =>
+            e.id === id && e.he ? { ...e, heNozzles: defaultExchangerNozzles(e.he) } : e,
+          ),
         }),
       removeEquipment: (id) =>
         set({
@@ -375,10 +430,15 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "vessel-estimator-v1",
-      version: 3,
+      version: 4,
       migrate: (persisted: unknown, version: number) => {
         const s = persisted as { equipment?: Equipment[] } & Record<string, unknown>;
         // v3: rate book moved from INR benchmarks to BHD, currency is now a display setting
+        // v4: welding / manhour basis added to the rate book
+        if (version < 4) {
+          const r = s.rates as (RateBook & { weld?: unknown }) | undefined;
+          if (r && !r.weld) r.weld = { ...DEFAULT_WELD };
+        }
         if (version < 3) {
           const rates = s.rates as (Record<string, unknown> & { materialRate?: Record<string, number> }) | undefined;
           if (rates) {

@@ -9,6 +9,7 @@
 
 import { areaReinforcement, shellCircumferential } from "./asme";
 import { allowableStress, materialByName, pipeOd, pipeWall, studSpec } from "./catalog";
+import { defaultExchangerNozzles, designExchanger, flangeClassFor } from "./tema";
 import { isBodyFlange, isManway, parseNozzles, type ProjectUnit } from "../data/units";
 import type { Equipment, PartRow } from "./types";
 
@@ -187,6 +188,16 @@ export interface JointOptions {
 }
 
 function shellBasis(eq: Equipment) {
+  // a shell & tube exchanger checks its nozzles against the TEMA design, not the
+  // vessel part sheet (which it does not have)
+  if (eq.he) {
+    const d = designExchanger(eq.he);
+    const mat = eq.he.shellMat;
+    const S = allowableStress(materialByName(mat), Math.max(eq.he.shellTemp, eq.he.tubeTemp));
+    const P = Math.max(eq.he.shellPressure, eq.he.tubePressure) / 1000; // MPa
+    const circ = shellCircumferential(P, d.shellId, S, 1, eq.he.ca);
+    return { shellT: d.shellThk, mat, S, P, tr: circ.base, E: 1 };
+  }
   const rows = eq.parts.shell ?? [];
   const tRows = rows.map((r) => num(r, "sh_thk")).filter((t) => t > 0);
   const shellT = tRows.length ? Math.max(...tRows) : eq.shellThk;
@@ -204,7 +215,12 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
   const fr1 = Math.min(1, Sneck / base.S);
   const ca = eq.corrosionAllowance;
   const lined = Boolean(opts.lined);
-  const cls = str(eq.parts.nozzle?.[0], "nz_rating") || "150#";
+  const cls = eq.he
+    ? flangeClassFor(
+        Math.max(eq.he.shellPressure, eq.he.tubePressure),
+        Math.max(eq.he.shellTemp, eq.he.tubeTemp),
+      )
+    : str(eq.parts.nozzle?.[0], "nz_rating") || "150#";
   const out: NozzleJoint[] = [];
 
   const make = (
@@ -216,10 +232,11 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
     tn: number,
     length: number,
     plateNeck: boolean,
+    ratingOverride?: string,
   ): NozzleJoint => {
     const od = pipeOd(size) || npsNum(size) * 25.4 + 12;
     const ftype = flangeTypeFor(kind, size);
-    const rating = ftype === "BLRF" && kind === "Manway" ? cls : cls;
+    const rating = ratingOverride ?? cls;
     const ratingKey = rating.replace("#", "");
     const sch = neckSchedule(size, rating);
     const wall = tn > 0 ? tn : pipeWall(size, sch);
@@ -287,6 +304,33 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
       ug37: { d, tr: base.tr, trn, fr1, shellT: base.shellT, E: base.E },
     };
   };
+
+  // exchanger nozzle schedule (TEMA RG-6.4 sizes, editable on the nozzle page)
+  if (eq.he) {
+    const d = designExchanger(eq.he);
+    const rows = eq.heNozzles ?? defaultExchangerNozzles(eq.he, d);
+    for (const n of rows) {
+      if (n.qty <= 0) continue;
+      const od = pipeOd(n.nps);
+      const rating = n.pressure > 0 ? flangeClassFor(n.pressure, n.temperature) : cls;
+      const sch = neckSchedule(n.nps, rating);
+      const tn = n.pressure > 0 ? pipeWall(n.nps, sch) : 0;
+      out.push(
+        make(
+          n.mark,
+          n.service,
+          n.nps,
+          n.qty,
+          "Nozzle",
+          tn,
+          od <= 60 ? 150 : od >= 457 ? 250 : 200,
+          od >= 508,
+          rating,
+        ),
+      );
+    }
+    return out;
+  }
 
   if (unit) {
     for (const n of parseNozzles(unit.nozzles)) {

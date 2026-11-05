@@ -3,7 +3,145 @@ import { useStore, fmt, fmtInt } from "../lib/store";
 import { buildEquipmentBom, rollupCost } from "../lib/bom";
 import { runDesign, nozzleNeckUG45, areaReinforcement } from "../lib/asme";
 import { allowableStress, materialByName, pipeOd, pipeWall, yieldStress } from "../lib/catalog";
+import { defaultExchangerNozzles, designExchanger, flangeClassFor } from "../lib/tema";
+import { exchangerComponents } from "../lib/exchangerParts";
 import VesselViewer3D, { type NozzleSpec } from "../components/VesselViewer3D";
+
+/** TEMA / ASME exchanger design panel — replaces the vessel sheet for exchangers */
+function ExchangerDesignPanel({
+  eq,
+  equipment,
+  setActiveId,
+}: {
+  eq: import("../lib/types").Equipment;
+  equipment: import("../lib/types").Equipment[];
+  setActiveId: (id: string) => void;
+}) {
+  const spec = eq.he!;
+  const d = designExchanger(spec);
+  const nozzles = eq.heNozzles ?? defaultExchangerNozzles(spec, d);
+  const components = exchangerComponents(eq, d);
+  const heater = d.heater;
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h2>TEMA / ASME exchanger design</h2>
+          <div className="sub">
+            {d.kind === "fired-heater" ? "Fired heater coil and casing" : `TEMA ${spec.tema}`} design for{" "}
+            {eq.tag} {eq.name} — tubesheet RCB-7.2 / UG-34, shell UG-27, heads UG-32(d), tube wall
+            RCB-2.6, flange class from the B16.5 pressure–temperature rating and the UG-99(b) hydrotest.
+          </div>
+        </div>
+        <div className="actions">
+          <div className="eq-tabs">
+            {equipment.map((e) => (
+              <button
+                key={e.id}
+                className={`eq-tab ${e.id === eq.id ? "active" : ""}`}
+                onClick={() => setActiveId(e.id)}
+              >
+                <span className="t">{e.tag}</span>
+                <span className="n">{e.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid g4" style={{ marginBottom: 14 }}>
+        <Kpi k={d.kind === "fired-heater" ? "Coil surface" : "Effective surface"} v={`${fmt(d.surfaceTotal, 0)} m²`} n={d.kind === "fired-heater" ? `${d.heater?.coilTubes ?? 0} coil tubes` : `${d.spec.shells} shell · ${d.tubesTotal} tube elements`} />
+        {d.kind === "fired-heater" ? (
+          <>
+            <Kpi k="Coil wall" v={`${(d.heater?.coilWall ?? 0).toFixed(1)} mm`} n={`required ${(d.heater?.coilWallRequired ?? 0).toFixed(1)} mm · API 560`} />
+            <Kpi k="Radiant flux" v={`${d.heater?.flux ?? 0} kW/m²`} n={`limit 37.6 · ${fmt(d.heater?.dutyKW ?? 0, 0)} kW absorbed`} />
+            <Kpi k="Burners" v={`${d.heater?.burners ?? 0}`} n={`${fmt(d.heater?.burnerDuty ?? 0, 0)} kW each · Ø${d.heater?.stackDia ?? 0} mm stack`} />
+          </>
+        ) : (
+          <>
+            <Kpi k="Shell ID / thickness" v={`${d.shellId} mm`} n={`${d.shellThk} mm plate · ${d.baffleCount} baffles`} />
+            <Kpi k="Tubesheet" v={`${d.tubesheetThk} mm`} n={`TEMA ${d.tubesheetTema.toFixed(1)} / UG-34 ${d.tubesheetUg34.toFixed(1)} + CA ${spec.ca}`} />
+            <Kpi k="Class / hydrotest" v={`${d.flangeClass}`} n={`test ${(d.hydrotest / 100).toFixed(1)} bar → ${d.hydrotestClass}`} />
+          </>
+        )}
+      </div>
+
+      {heater && (
+        <div className="grid g4" style={{ marginBottom: 14 }}>
+          <Kpi k="Absorbed duty" v={`${fmt(heater.dutyKW, 0)} kW`} n={`${heater.flux} kW/m² average radiant flux`} />
+          <Kpi k="Coil tubes" v={`${heater.coilTubes}`} n={`${heater.coilWall.toFixed(1)} mm wall · ${fmt(heater.coilWeight, 0)} kg`} />
+          <Kpi k="Burners" v={`${heater.burners}`} n={`${fmt(heater.burnerDuty, 0)} kW each`} />
+          <Kpi k="Stack" v={`Ø${heater.stackDia} mm`} n={`${(heater.stackHeight / 1000).toFixed(1)} m high`} />
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Design checks</h3>
+          <span className="hint">{d.checks.filter((c) => !c.ok).length === 0 ? "all checks pass" : `${d.checks.filter((c) => !c.ok).length} item(s) need review`}</span>
+        </div>
+        <div className="card-body tight scroll-x">
+          <table className="data">
+            <thead>
+              <tr><th>Code</th><th>Item</th><th>Check</th><th>Result</th></tr>
+            </thead>
+            <tbody>
+              {d.checks.map((c) => (
+                <tr key={c.code + c.item}>
+                  <td className="small">{c.code}</td>
+                  <td>{c.item}</td>
+                  <td className="small">{c.detail}</td>
+                  <td style={{ color: c.ok ? "#1c6b1c" : "#8b0000", fontWeight: 700 }}>{c.ok ? "OK" : "REVIEW"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid g2" style={{ marginTop: 14 }}>
+        <div className="card">
+          <div className="card-head"><h3>Component weights</h3><span className="hint">from the code design</span></div>
+          <div className="card-body tight scroll-x" style={{ maxHeight: 380, overflowY: "auto" }}>
+            <table className="data">
+              <thead><tr><th>Component</th><th className="num">Qty</th><th className="num">Thk</th><th className="num">kg</th></tr></thead>
+              <tbody>
+                {components.map((c) => (
+                  <tr key={c.key}>
+                    <td>{c.label}</td>
+                    <td className="num">{fmt(c.qty, 0)}</td>
+                    <td className="num">{c.thickness ? fmt(c.thickness, 1) : "—"}</td>
+                    <td className="num">{fmt(c.weight, 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-head"><h3>Nozzle schedule</h3><span className="hint">TEMA RG-6.4 · {flangeClassFor(Math.max(spec.shellPressure, spec.tubePressure), Math.max(spec.shellTemp, spec.tubeTemp))}</span></div>
+          <div className="card-body tight scroll-x">
+            <table className="data">
+              <thead><tr><th>Mark</th><th>Service</th><th>Size</th><th className="num">Qty</th><th className="num">P (bar)</th></tr></thead>
+              <tbody>
+                {nozzles.map((n) => (
+                  <tr key={n.mark}>
+                    <td>{n.mark}</td>
+                    <td>{n.service}</td>
+                    <td>{n.nps}</td>
+                    <td className="num">{n.qty}</td>
+                    <td className="num">{(n.pressure / 100).toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="est-note">Edit the schedule on the Nozzle Materials page — flange, neck, gasket and studs follow the rating table.</div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 const CODES = [
   ["ASME BPVC VIII Div.1", "UG-27 / UG-32 / UG-45 / UG-37 / UG-28 / UG-99 / UG-116", "Shell, head, nozzle neck, reinforcement, external pressure, hydrotest, stamping"],
@@ -131,6 +269,10 @@ export default function DesignPage() {
       </div>
     );
   }
+
+  // shell & tube exchangers and fired heaters are designed by TEMA / API 560,
+  // not by the vessel UG-27 sheet — show their own design panel
+  if (eq.he) return <ExchangerDesignPanel eq={eq} equipment={equipment} setActiveId={setActiveId} />;
 
   const { design, nozzleChecks } = model;
   const mdmtAllow = design.column;

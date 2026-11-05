@@ -51,7 +51,7 @@ export default function ProjectPage() {
   const heLoadedByTag = useMemo(() => {
     const m = new Map<string, Equipment>();
     for (const e of equipment) {
-      if (!/exchanger/i.test(e.type)) continue;
+      if (!e.he && !/exchanger|fired heater/i.test(e.type)) continue;
       const u = EXCHANGER_UNITS.find((x) => x.tag === e.tag && x.name === e.name);
       if (u && !m.has(u.tag)) m.set(u.tag, e);
     }

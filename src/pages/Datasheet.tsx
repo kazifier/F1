@@ -3,6 +3,7 @@ import { useStore, fmt } from "../lib/store";
 import { runDesign, nozzleNeckUG45, areaReinforcement } from "../lib/asme";
 import { MATERIALS, HEAD_TYPES, NPS_LIST, SCHEDULE_LIST, materialByName, allowableStress, pipeOd, pipeWall } from "../lib/catalog";
 import type { NozzleInput } from "../lib/types";
+import { defaultExchangerNozzles, designExchanger } from "../lib/tema";
 import { exportCsv } from "../lib/bom";
 
 interface Sheet {
@@ -73,6 +74,45 @@ export default function DatasheetPage() {
     const eq = equipment.find((e) => e.id === id);
     setSourceId(id);
     if (!eq) return;
+    // an exchanger carries its geometry in the TEMA design, not in part rows
+    if (eq.he) {
+      const d = designExchanger(eq.he);
+      setSheet({
+        tag: eq.tag,
+        description: eq.name,
+        orientation: d.shellId > 0 && eq.he.tubeLength > 10000 ? "Vertical" : "Horizontal",
+        shellId: d.shellId,
+        shellThk: d.shellThk,
+        shellLength: eq.he.tubeLength,
+        headThk: d.headThk,
+        headType: "2:1 Ellipsoidal",
+        designPressure: eq.he.shellPressure,
+        designTemperature: eq.he.shellTemp,
+        externalPressure: 100,
+        material: eq.he.shellMat,
+        ca: eq.he.ca,
+        E: 1,
+        windSpeed: 39,
+        seismic: 0.1,
+        radiography: "Full RT",
+      });
+      setNozzles(
+        (eq.heNozzles ?? defaultExchangerNozzles(eq.he, d)).map((n, i) => ({
+          id: `nz-${eq.id}-${n.mark}-${i}`,
+          mark: n.mark,
+          nps: n.nps,
+          schedule: "40",
+          type: "Pipe",
+          cladding: "No",
+          projection: 200,
+          padThickness: 0,
+          padOd: 0,
+          corrodedNeck: 0,
+          repad: "No",
+        })),
+      );
+      return;
+    }
     const sh = eq.parts.shell?.[0] ?? {};
     const hd = eq.parts.head?.[0] ?? {};
     setSheet({

@@ -6,10 +6,19 @@ import DesignPage from "./pages/Design";
 import BoqPage from "./pages/Boq";
 import DatasheetPage from "./pages/Datasheet";
 import IntakePage from "./pages/Intake";
+import WeldingPage from "./pages/Welding";
 import { useStore } from "./lib/store";
 import { CURRENCIES, FX_NOTE, VAT_BH } from "./lib/currency";
 
-export type Route = "project" | "estimator" | "nozzles" | "design" | "boq" | "datasheet" | "intake";
+export type Route =
+  | "project"
+  | "estimator"
+  | "nozzles"
+  | "design"
+  | "boq"
+  | "welding"
+  | "datasheet"
+  | "intake";
 
 const ROUTES: { key: Route; idx: string; label: string; title: string }[] = [
   { key: "project", idx: "00", label: "Project Scope", title: "6 columns · 25 vessels" },
@@ -17,8 +26,9 @@ const ROUTES: { key: Route; idx: string; label: string; title: string }[] = [
   { key: "nozzles", idx: "02", label: "Nozzle Materials", title: "Flange · neck · pad · gasket · studs" },
   { key: "design", idx: "03", label: "ASME Design + 3D", title: "Code design & 3D model" },
   { key: "boq", idx: "04", label: "Optimised BOQ", title: "Combined bill of quantities" },
-  { key: "datasheet", idx: "05", label: "Datasheet Calc", title: "Thickness & nozzle check" },
-  { key: "intake", idx: "06", label: "AI Doc Intake", title: "Read datasheets & drawings" },
+  { key: "welding", idx: "05", label: "Welding & Manhours", title: "WPS · layers · shop hours" },
+  { key: "datasheet", idx: "06", label: "Datasheet Calc", title: "Thickness & nozzle check" },
+  { key: "intake", idx: "07", label: "AI Doc Intake", title: "Read datasheets & drawings" },
 ];
 
 function readHash(): Route {
@@ -100,6 +110,7 @@ export default function App() {
           {route === "nozzles" && <NozzlesPage />}
           {route === "design" && <DesignPage />}
           {route === "boq" && <BoqPage />}
+          {route === "welding" && <WeldingPage />}
           {route === "datasheet" && <DatasheetPage />}
           {route === "intake" && <IntakePage />}
         </div>

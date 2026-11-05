@@ -67,6 +67,21 @@ export interface Equipment {
   he?: import("./tema").ExchangerSpec;
   /** exchanger components that are not in the design (expansion joint, lugs …) */
   heExtras?: Record<string, { qty: string; amount: string }>;
+  /** exchanger nozzle schedule — generated from the TEMA design, editable */
+  heNozzles?: HeNozzleRow[];
+}
+
+/** one opening on a shell & tube exchanger */
+export interface HeNozzleRow {
+  mark: string;
+  service: string; // "Shell inlet" / "Channel outlet" / "Vent" …
+  nps: string; // NPS, e.g. 8"
+  qty: number;
+  /** design pressure the neck is checked against, kPa(g) */
+  pressure: number;
+  /** design temperature, °C */
+  temperature: number;
+  shellSide: boolean;
 }
 
 export interface ProjectInfo {
@@ -104,6 +119,41 @@ export interface RateBook {
   plateUtilisation: number; // 0..1 nesting yield
   plateWidth: number; // mm standard plate
   plateLength: number; // mm
+  /** welding procedure, weld layers and shop manhour basis */
+  weld: WeldSettings;
+}
+
+// ---------------------------------------------------------------------------
+// Welding / manhour basis — one WPS family per part & weld type
+// ---------------------------------------------------------------------------
+
+export type WeldProcess = "GTAW" | "SMAW" | "SAW" | "FCAW";
+export type JointPrep = "Single V" | "Double V" | "Square";
+export type GougeMethod = "None" | "Manual grinding" | "Machine grinding";
+export type GougeSelect = "Auto" | "Manual grinding" | "Machine grinding";
+
+export interface WeldSettings {
+  /** shop manhour rate, BHD per manhour (default 2.00) */
+  shopRate: number;
+  /** root pass process — always a TIG root on these exchangers */
+  rootProcess: WeldProcess;
+  /** fill / cap process up to the thickness break */
+  fillProcessThin: WeldProcess;
+  /** fill / cap process above the thickness break */
+  fillProcessThick: WeldProcess;
+  /** plate thickness (mm) where the fill process changes SMAW → SAW */
+  thickThreshold: number;
+  /** thickness (mm) above which the joint becomes a double V (no back gouging) */
+  doubleVThreshold: number;
+  /** back-gouge method: auto (by equipment diameter) or forced */
+  gougeMethod: GougeSelect;
+  /** at or above this diameter the shop machine-grinds the back gouge */
+  gougeAutoDia: number;
+  /** manhours per metre of back gouge per 10 mm of depth */
+  manualGougeRate: number;
+  machineGougeRate: number;
+  /** fit-up / handling / interpass cleaning, manhours per metre of joint */
+  fitUp: number;
 }
 
 export interface DatasheetInputs {

@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useStore, fmt, fmtInt, money } from "../lib/store";
 import { buildBoq, buildEquipmentBom, rollupCost, exportCsv, type BomItem } from "../lib/bom";
-import { MATERIALS } from "../lib/catalog";
-import { CURRENCIES, getCurrency, VAT_BH } from "../lib/currency";
+import { weldSummary } from "../lib/welding";
+import { CURRENCIES, getCurrency } from "../lib/currency";
 import type { ItemCategory } from "../lib/bom";
 
 const CAT_ORDER: ItemCategory[] = ["Plate", "Pipe", "Flange", "Fitting", "Structure", "Consumable", "Service"];
@@ -11,7 +11,6 @@ export default function BoqPage() {
   const { equipment, rates, project, setProject } = useStore();
   const cur = getCurrency(project.currency);
   const [excluded, setExcluded] = useState<string[]>([]);
-  const [showRates, setShowRates] = useState(false);
 
   const included = equipment.filter((e) => !excluded.includes(e.id));
 
@@ -45,6 +44,10 @@ export default function BoqPage() {
   const totalNet = cost.reduce((a, c) => a + c.roll.total * c.eq.qty, 0);
   const totalVat = cost.reduce((a, c) => a + c.roll.vat * c.eq.qty, 0);
   const totalWeight = boq.totals.weight;
+  const weldHours = included.reduce(
+    (a, eq) => a + weldSummary(eq, buildEquipmentBom(eq, rates), rates).hours * eq.qty,
+    0,
+  );
   const potentialSaving = boq.suggestions.reduce((a, s) => a + s.saving, 0);
 
   return (
@@ -74,9 +77,9 @@ export default function BoqPage() {
               </option>
             ))}
           </select>
-          <button className="btn" onClick={() => setShowRates((v) => !v)}>
-            {showRates ? "Hide rate book" : "Rate book"}
-          </button>
+          <a className="btn" href="#/welding" title="Welding procedures, weld layers and shop manhours">
+            Welding &amp; manhours ({fmtInt(weldHours)} Mhr)
+          </a>
           <button
             className="btn btn-primary"
             onClick={() =>
@@ -139,8 +142,6 @@ export default function BoqPage() {
           </div>
         </div>
       </div>
-
-      {showRates && <RateBook />}
 
       <div className="card">
         <div className="card-head">
@@ -244,6 +245,7 @@ export default function BoqPage() {
               <tbody>
                 <tr><td>Raw material (nested plates + bought-out)</td><td className="num">{money(directMaterial)}</td></tr>
                 <tr><td>Fabrication, welding, NDT, PWHT</td><td className="num">{money(directFabrication)}</td></tr>
+                <tr><td className="dim">of which welding labour — {fmtInt(weldHours)} Mhr × {money(rates.weld.shopRate)}/Mhr</td><td className="num dim">{money(weldHours * rates.weld.shopRate)}</td></tr>
                 <tr><td>Painting &amp; insulation</td><td className="num">{money(finishCost)}</td></tr>
                 <tr><td>Overhead + profit + freight</td><td className="num">{money(overheads)}</td></tr>
                 <tr><td><b>Ex-works total (excl. VAT)</b></td><td className="num"><b>{money(totalNet)}</b></td></tr>
@@ -283,90 +285,6 @@ function Kpi({ k, v, n }: { k: string; v: string; n?: string }) {
       <div className="k">{k}</div>
       <div className="v">{v}</div>
       {n && <div className="n">{n}</div>}
-    </div>
-  );
-}
-
-function RateBook() {
-  const { rates, setRates, project } = useStore();
-  const cur = getCurrency(project.currency);
-  const k = cur.perBhd; // BHD → display currency
-  const dec = Math.max(cur.decimals, 2);
-  const show = (v: number) => +(v * k).toFixed(dec);
-  const back = (v: string) => (Number.isFinite(Number(v)) ? Number(v) / k : 0);
-
-  const Rate = ({ label, value, onSet }: { label: string; value: number; onSet: (bhd: number) => void }) => (
-    <div className="field">
-      <label>{label}</label>
-      <input type="number" step="any" value={show(value)} onChange={(e) => onSet(back(e.target.value))} />
-    </div>
-  );
-
-  return (
-    <div className="card">
-      <div className="card-head">
-        <h3>Rate book</h3>
-        <span className="hint">
-          editable — entered in {cur.code}, stored in BHD · drives steps 5 &amp; 6 and this BOQ
-        </span>
-      </div>
-      <div className="card-body">
-        <div className="grid g4">
-          <Rate label={`Fabrication — carbon steel (${cur.code}/kg)`} value={rates.fabricationCmf} onSet={(v) => setRates({ fabricationCmf: v })} />
-          <Rate label={`Fabrication — stainless (${cur.code}/kg)`} value={rates.fabricationSsf} onSet={(v) => setRates({ fabricationSsf: v })} />
-          <Rate label={`Welding (${cur.code}/m)`} value={rates.weldingRate} onSet={(v) => setRates({ weldingRate: v })} />
-          <Rate label={`NDT (${cur.code}/m)`} value={rates.testingRate} onSet={(v) => setRates({ testingRate: v })} />
-          <Rate label={`PWHT (${cur.code}/kg)`} value={rates.pwhtRate} onSet={(v) => setRates({ pwhtRate: v })} />
-          <Rate label={`Painting (${cur.code}/m²)`} value={rates.paintingRate} onSet={(v) => setRates({ paintingRate: v })} />
-          <div className="field">
-            <label>Plate width (mm)</label>
-            <input type="number" value={rates.plateWidth} onChange={(e) => setRates({ plateWidth: Number(e.target.value) })} />
-          </div>
-          <div className="field">
-            <label>Plate length (mm)</label>
-            <input type="number" value={rates.plateLength} onChange={(e) => setRates({ plateLength: Number(e.target.value) })} />
-          </div>
-          <div className="field">
-            <label>Nesting yield (%)</label>
-            <input
-              type="number"
-              value={Math.round(rates.plateUtilisation * 100)}
-              onChange={(e) => setRates({ plateUtilisation: Math.max(0.3, Math.min(1, Number(e.target.value) / 100)) })}
-            />
-          </div>
-          <div className="field">
-            <label>Overhead (%)</label>
-            <input type="number" value={rates.overheadPct} onChange={(e) => setRates({ overheadPct: Number(e.target.value) })} />
-          </div>
-          <div className="field">
-            <label>Profit (%)</label>
-            <input type="number" value={rates.profitPct} onChange={(e) => setRates({ profitPct: Number(e.target.value) })} />
-          </div>
-          <div className="field">
-            <label>Freight (%)</label>
-            <input type="number" value={rates.freightPct} onChange={(e) => setRates({ freightPct: Number(e.target.value) })} />
-          </div>
-          <div className="field">
-            <label>Bahrain VAT (%) — excluded</label>
-            <input type="number" value={rates.vatPct} onChange={(e) => setRates({ vatPct: Number(e.target.value) })} />
-          </div>
-        </div>
-
-        <div className="divider" />
-        <div className="small dim" style={{ marginBottom: 8 }}>
-          Material purchase rate ({cur.code}/kg) — all prices exclude Bahrain VAT ({VAT_BH}%)
-        </div>
-        <div className="grid g5">
-          {MATERIALS.map((m) => (
-            <Rate
-              key={m.name}
-              label={m.name}
-              value={rates.materialRate[m.name] ?? m.rate}
-              onSet={(v) => setRates({ materialRate: { ...rates.materialRate, [m.name]: v } })}
-            />
-          ))}
-        </div>
-      </div>
     </div>
   );
 }

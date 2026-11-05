@@ -2,6 +2,9 @@ import { useMemo, useState } from "react";
 import { useStore } from "../lib/store";
 import { PROJECT_UNITS, isBodyFlange, parseNozzles } from "../data/units";
 import { unitToEquipment } from "../data/build";
+import { EXCHANGER_UNITS } from "../data/exchangers";
+import { buildExchangerScope } from "../lib/exchangerParts";
+import { designExchanger } from "../lib/tema";
 import { jointSummary, nozzleJoints, type NozzleJoint } from "../lib/nozzleDetail";
 
 /**
@@ -11,9 +14,12 @@ import { jointSummary, nozzleJoints, type NozzleJoint } from "../lib/nozzleDetai
  */
 export default function NozzlesPage() {
   const { equipment, updateEquipment, replaceEquipment } = useStore();
-  // tag + datasheet name: the demo seed equipment reuses 10-C01 / 10-D04 tags
+  // vessel datasheet rows plus every shell & tube exchanger / fired heater
   const scoped = useMemo(
-    () => equipment.filter((e) => PROJECT_UNITS.some((u) => u.tag === e.tag && u.name === e.name)),
+    () =>
+      equipment.filter(
+        (e) => e.he || PROJECT_UNITS.some((u) => u.tag === e.tag && u.name === e.name),
+      ),
     [equipment],
   );
   const [tag, setTag] = useState<string>("");
@@ -25,6 +31,11 @@ export default function NozzlesPage() {
   const loadScope = () => {
     replaceEquipment(PROJECT_UNITS.map((u) => unitToEquipment(u)));
     setTag(PROJECT_UNITS[0].tag);
+  };
+
+  const loadExchangers = () => {
+    replaceEquipment(buildExchangerScope(EXCHANGER_UNITS));
+    setTag(EXCHANGER_UNITS[0].tag);
   };
 
   if (!eq) {
@@ -46,9 +57,14 @@ export default function NozzlesPage() {
               The nozzle schedule is built from the project datasheets. Load the scope to detail all 31
               items, or load a single tag from <b>00 Project Scope</b>.
             </p>
-            <button className="est-btn" onClick={loadScope}>
-              Load full scope (31)
-            </button>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="est-btn" onClick={loadScope}>
+                Load columns &amp; vessels (31)
+              </button>
+              <button className="est-btn" onClick={loadExchangers}>
+                Load heat exchangers ({EXCHANGER_UNITS.length})
+              </button>
+            </div>
           </div>
         </div>
       </>
@@ -70,9 +86,14 @@ export default function NozzlesPage() {
         </div>
         <div className="actions">
           {scoped.length === 0 && (
-            <button className="est-btn" onClick={loadScope}>
-              Load full scope (31)
-            </button>
+            <>
+              <button className="est-btn" onClick={loadScope}>
+                Load columns &amp; vessels (31)
+              </button>
+              <button className="est-btn" onClick={loadExchangers}>
+                Load heat exchangers ({EXCHANGER_UNITS.length})
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -104,14 +125,23 @@ export default function NozzlesPage() {
           <span className="k">Class</span>
           <span className="v">{joints[0]?.flange.rating ?? "—"}</span>
         </div>
-        <label className="est-check">
-          <input
-            type="checkbox"
-            checked={Boolean(eq.lined)}
-            onChange={(e) => updateEquipment(eq.id, { lined: e.target.checked })}
-          />
-          Internally lined — lined flange facing and lined pad
-        </label>
+        {eq.he ? (
+          <div className="est-readout">
+            <span className="k">TEMA {eq.he.tema}</span>
+            <span className="v">
+              Ø{designExchanger(eq.he).shellId} shell · {eq.heNozzles?.length ?? 0} nozzle marks
+            </span>
+          </div>
+        ) : (
+          <label className="est-check">
+            <input
+              type="checkbox"
+              checked={Boolean(eq.lined)}
+              onChange={(e) => updateEquipment(eq.id, { lined: e.target.checked })}
+            />
+            Internally lined — lined flange facing and lined pad
+          </label>
+        )}
       </div>
 
       <div className="est-kpis">
@@ -204,7 +234,9 @@ export default function NozzlesPage() {
               {joints.length === 0 && (
                 <tr>
                   <td colSpan={9} className="est-sub" style={{ padding: 8 }}>
-                    {marks.length} schedule lines but no dimensioned openings — check the datasheet schedule.
+                  {eq.he
+                      ? "No nozzle marks on this exchanger — add them from the exchanger wizard, or reset to the TEMA RG-6.4 schedule."
+                      : `${marks.length} schedule lines but no dimensioned openings — check the datasheet schedule.`}
                   </td>
                 </tr>
               )}
