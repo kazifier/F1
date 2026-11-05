@@ -261,18 +261,61 @@ export interface LandedBreakdown {
   lane: string;
   equipment: string;
   mode: CargoMode;
+  /** freight on both legs */
   freight: number;
+  importFreight: number;
+  exportFreight: number;
   handling: number;
   packing: number;
+  /** import duty into the workshop + duty at the client's border */
   duty: number;
+  importDuty: number;
+  exportDuty: number;
   dutyPct: number;
+  importDutyPct: number;
   insurance: number;
   surcharge: number;
+  importClearance: number;
+  exportClearance: number;
+  docs: number;
   total: number;
   note: string;
 }
 
 const MIN_FREIGHT = 6; // BHD per consolidated line
+
+/**
+ * The workshop. Every BOQ line is fabricated here, so material is imported into
+ * Bahrain first and the finished equipment is exported from Bahrain to the
+ * client — two customs events, not one.
+ */
+export const WORKSHOP = {
+  country: "Bahrain",
+  city: "Sitra",
+  port: "Khalifa Bin Salman",
+} as const;
+
+/** export sea freight from Bahrain, BHD per tonne, by client destination */
+const EXPORT_SEA_RATE: Record<string, number> = {
+  Iraq: 22,
+  Jordan: 26,
+  Lebanon: 28,
+  Libya: 38,
+  Egypt: 30,
+  Algeria: 42,
+  Morocco: 44,
+  Tunisia: 40,
+  Sudan: 45,
+};
+
+/** declared export value uplift over landed material — fabrication and margin */
+const EXPORT_VALUE_UPLIFT = 0.35;
+
+/** road distance, km — Bahrain's internal haul is short, other domestic hauls are not */
+function roadKm(a: string, b: string): number {
+  if (a === b) return a === WORKSHOP.country ? 45 : 350;
+  return gccRoadKm(a, b);
+}
 
 /**
  * Largest single piece behind a BOQ line. A 230 t tube line is 230 t of tubes on
@@ -294,9 +337,18 @@ export const pieceWeightOf = (line: { category: ItemCategory; weight: number }) 
   Math.min(line.weight, PIECE_CAP[line.category] ?? 4000);
 
 /**
- * Landed cost of one BOQ line: packing + freight + handling + insurance + duty
- * on the CIF value. Clearance and documentation are per shipment, so they are
- * carried by shipmentPlan() rather than smeared over the lines.
+ * Landed cost of one BOQ line, on the Bahrain-workshop basis:
+ *
+ *   leg 1  origin -> Bahrain workshop   import freight, duty, clearing, docs
+ *   leg 2  Bahrain workshop -> client    export freight, destination duty, clearing, docs
+ *
+ * A line bought in Bahrain skips leg 1. A client in Bahrain skips leg 2 and pays
+ * no duty on locally made equipment. GCC clients take Bahrain-origin goods at
+ * 0% duty under the GCC common tariff with a certificate of origin; other
+ * destinations pay their own tariff on the declared export value.
+ *
+ * Clearing and documentation are per shipment, so shipmentPlan() carries them
+ * rather than smearing them over every line.
  */
 export function landedCost(
   line: Pick<BoqLine, "key" | "category" | "weight" | "amount" | "description">,
@@ -306,69 +358,124 @@ export function landedCost(
 ): LandedBreakdown {
   const origin = originOf(originName);
   const dest = destinationOf(settings.destination);
+  const home = destinationOf(WORKSHOP.country);
+  const workshopOrigin = originOf(WORKSHOP.country);
   const t = line.weight / 1000;
   const piece = pieceWeightOf(line);
-  const pack = packingFor({
-    weightKg: line.weight,
-    pieceKg: piece,
-    origin,
-    dest,
-    ...ctx,
-  });
-  const domestic = origin.name === dest.name;
-  const bothGcc = origin.region === "GCC" && dest.region === "GCC";
+  const share = line.weight > 0 ? piece / line.weight : 0;
+
+  const localPurchase = origin.name === home.name;
+  const localDelivery = dest.name === home.name;
+
+  const importPack = packingFor({ weightKg: line.weight, pieceKg: piece, origin, dest: home, ...ctx });
+  const exportPack = packingFor({ weightKg: line.weight, pieceKg: piece, origin: workshopOrigin, dest, ...ctx });
 
   const packing = line.amount * (settings.packingPct / 100);
-  let freight = 0;
-  if (domestic) {
-    freight = t * gccRoadKm(origin.name, dest.name) * settings.landRate;
-  } else if (bothGcc) {
-    freight = t * gccRoadKm(origin.name, dest.name) * settings.landRate * (1 + settings.fuelPct / 100);
-  } else {
-    const sea = t * origin.seaRate * settings.seaRateFactor * (1 + settings.fuelPct / 100);
-    const inland = t * dest.inlandKm * settings.landRate;
-    freight = sea + inland;
-  }
-  if (pack.mode === "Breakbulk / heavy lift" || pack.mode === "Sea + road (heavy lift)") {
-    freight *= 1 + settings.abnormalLoadPct / 100;
-  }
-  freight = Math.max(MIN_FREIGHT, freight) * (1 + dest.warRiskPct / 100);
-  const handling = domestic ? 0 : t * settings.portHandling;
-  const insurance = (line.amount + freight) * (settings.insurancePct / 100);
+  const handlingRate = settings.portHandling;
 
-  const pct = dutyPct(dest, line.category, settings.dutyOverridePct);
-  const duty = domestic ? 0 : (line.amount + freight + insurance) * (pct / 100);
-  // the abnormal-load surcharge rides on the share of the freight that belongs
-  // to the oversize / heavy piece, not on a whole consolidated line
-  const share = line.weight > 0 ? piece / line.weight : 0;
-  const surcharge = pack.oversize ? freight * share * (settings.abnormalLoadPct / 100) : 0;
+  let importFreight = 0;
+  let exportFreight = 0;
+  let handling = 0;
+  let importDuty = 0;
+  let exportDuty = 0;
+  let insurance = 0;
+  let surcharge = 0;
+
+  const importDutyRate = dutyPct(home, line.category, null);
+  const exportDutyRate = dest.region === "GCC" ? 0 : dutyPct(dest, line.category, settings.dutyOverridePct);
+
+  // ---- leg 1: material into the Bahrain workshop ------------------------------
+  if (localPurchase) {
+    importFreight = Math.max(MIN_FREIGHT, t * roadKm(home.name, home.name) * settings.landRate);
+    insurance += (line.amount + importFreight) * (settings.insurancePct / 100);
+  } else {
+    if (origin.region === "GCC") {
+      importFreight = t * roadKm(origin.name, home.name) * settings.landRate * (1 + settings.fuelPct / 100);
+    } else {
+      const sea = t * origin.seaRate * settings.seaRateFactor * (1 + settings.fuelPct / 100);
+      importFreight = sea + t * home.inlandKm * settings.landRate;
+    }
+    if (importPack.heavy || importPack.oversize) {
+      importFreight *= 1 + (settings.abnormalLoadPct / 100) * share;
+    }
+    importFreight = Math.max(MIN_FREIGHT, importFreight);
+    handling += t * handlingRate;
+    const cif = line.amount + importFreight;
+    insurance += cif * (settings.insurancePct / 100);
+    importDuty = (cif + insurance) * (importDutyRate / 100);
+  }
+
+  // ---- leg 2: finished equipment from the workshop to the client -------------
+  if (!localDelivery) {
+    if (dest.region === "GCC") {
+      exportFreight = t * roadKm(home.name, dest.name) * settings.landRate * (1 + settings.fuelPct / 100);
+    } else {
+      const sea = t * (EXPORT_SEA_RATE[dest.name] ?? 32) * settings.seaRateFactor * (1 + settings.fuelPct / 100);
+      exportFreight = sea + t * dest.inlandKm * settings.landRate;
+    }
+    if (exportPack.heavy || exportPack.oversize) {
+      exportFreight *= 1 + (settings.abnormalLoadPct / 100) * share;
+    }
+    exportFreight = Math.max(MIN_FREIGHT, exportFreight) * (1 + dest.warRiskPct / 100);
+    handling += t * handlingRate;
+
+    const declared = (line.amount + importFreight + importDuty + packing) * (1 + EXPORT_VALUE_UPLIFT);
+    const cif = declared + exportFreight;
+    insurance += cif * (settings.insurancePct / 100);
+    exportDuty = cif * (exportDutyRate / 100);
+  }
+
+  const freight = importFreight + exportFreight;
+  if (importPack.oversize && !localPurchase) surcharge += importFreight * share * (settings.abnormalLoadPct / 100);
+  if (exportPack.oversize && !localDelivery) surcharge += exportFreight * share * (settings.abnormalLoadPct / 100);
+
+  const lane = localPurchase
+    ? localDelivery
+      ? `Bahrain local supply — ${WORKSHOP.city} workshop`
+      : `Bahrain supply → ${WORKSHOP.city} workshop → ${dest.name}`
+    : localDelivery
+      ? `${origin.port} → Khalifa Bin Salman → ${WORKSHOP.city} workshop`
+      : `${origin.port} → Khalifa Bin Salman → ${WORKSHOP.city} → ${dest.port}`;
+
+  const equipment = [importPack.equipment];
+  if (!localDelivery) equipment.push(exportPack.equipment);
+
+  const noteParts = [importPack.note];
+  if (!localDelivery) noteParts.push(exportPack.note);
+  if (dest.region === "GCC" && !localDelivery)
+    noteParts.push("GCC-origin goods clear at 0% duty with a Bahrain certificate of origin");
 
   return {
     origin: origin.name,
-    lane: domestic
-      ? "Domestic"
-      : bothGcc
-        ? `${origin.name} → ${dest.name} (road ${gccRoadKm(origin.name, dest.name)} km)`
-        : `${origin.port} → ${dest.port} (sea) + ${dest.inlandKm} km road`,
-    equipment: pack.equipment,
-    mode: pack.mode,
+    lane,
+    equipment: equipment.join(" → "),
+    mode: importPack.mode,
     freight,
+    importFreight,
+    exportFreight,
     handling,
     packing,
-    duty,
-    dutyPct: domestic ? 0 : pct,
+    duty: importDuty + exportDuty,
+    importDuty,
+    exportDuty,
+    dutyPct: exportDutyRate,
+    importDutyPct: localPurchase ? 0 : importDutyRate,
     insurance,
     surcharge,
-    total: freight + handling + packing + duty + insurance + surcharge,
-    note: pack.note,
+    importClearance: 0,
+    exportClearance: 0,
+    docs: 0,
+    total: freight + handling + packing + importDuty + exportDuty + insurance + surcharge,
+    note: noteParts.join(" · "),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Shipment plan — how the whole procurement actually moves
+// Shipment plan — the two legs, origin by origin
 // ---------------------------------------------------------------------------
 
 export interface ShipmentLine {
+  leg: "Import" | "Export";
   origin: string;
   mode: string;
   packing: string;
@@ -385,7 +492,6 @@ export interface ShipmentLine {
   docs: number;
   lines: number;
   subtotal: number;
-  shipping: number; // BHD / tonne for this origin
   note: string;
 }
 
@@ -393,9 +499,13 @@ export interface ShipmentPlan {
   rows: ShipmentLine[];
   weight: number;
   volume: number;
+  importFreight: number;
+  exportFreight: number;
   freight: number;
   handling: number;
   packing: number;
+  importDuty: number;
+  exportDuty: number;
   duty: number;
   insurance: number;
   surcharge: number;
@@ -421,15 +531,20 @@ export function shipmentPlan(
   settings: LogisticsSettings,
 ): ShipmentPlan {
   const dest = destinationOf(settings.destination);
-  const map = new Map<string, ShipmentLine>();
+  const home = destinationOf(WORKSHOP.country);
+  const localDelivery = dest.name === home.name;
+
+  const imports = new Map<string, ShipmentLine>();
   for (const { line, breakdown } of entries) {
     const origin = originOf(breakdown.origin);
+    if (origin.name === home.name) continue;
     const cur =
-      map.get(origin.name) ??
+      imports.get(origin.name) ??
       ({
+        leg: "Import",
         origin: origin.name,
         mode: breakdown.mode,
-        packing: origin.region === "GCC" && dest.region === "GCC" ? "Export wrapped / open" : "Seaworthy export packing",
+        packing: "Seaworthy export packing",
         weight: 0,
         volume: 0,
         containers: "",
@@ -443,44 +558,82 @@ export function shipmentPlan(
         docs: 0,
         lines: 0,
         subtotal: 0,
-        shipping: origin.seaRate,
         note: origin.note,
       } as ShipmentLine);
     cur.weight += line.weight;
-    cur.volume += line.weight / 2200; // packed steel ≈ 2.2 t per m³
-    cur.freight += breakdown.freight;
-    cur.handling += breakdown.handling;
+    cur.volume += line.weight / 2200;
+    cur.freight += breakdown.importFreight;
+    cur.handling += breakdown.handling / 2;
     cur.packingCost += breakdown.packing;
-    cur.duty += breakdown.duty;
-    cur.insurance += breakdown.insurance;
-    cur.surcharge += breakdown.surcharge;
+    cur.duty += breakdown.importDuty;
+    cur.insurance += breakdown.insurance / 2;
+    cur.surcharge += breakdown.surcharge / 2;
     cur.lines += 1;
     if (breakdown.mode === "Breakbulk / heavy lift" || breakdown.mode === "Sea + road (heavy lift)") cur.mode = breakdown.mode;
-    map.set(origin.name, cur);
+    imports.set(origin.name, cur);
   }
 
-  const rows = [...map.values()];
-  for (const r of rows) {
-    const origin = originOf(r.origin);
-    const domestic = r.origin === dest.name;
-    // one clearing file and one document set per origin per shipment
-    r.clearance = domestic ? 0 : dest.clearance;
-    r.docs = domestic ? 0 : origin.docs + settings.documentation;
-    r.containers = domestic ? "Road" : containersFor(r.weight / 1000, r.volume, r.mode);
-    r.subtotal =
-      r.freight + r.handling + r.packingCost + r.duty + r.insurance + r.surcharge + r.clearance + r.docs;
+  for (const r of imports.values()) {
+    r.clearance = settings.clearance;
+    r.docs = originOf(r.origin).docs + settings.documentation;
+    r.containers = containersFor(r.weight / 1000, r.volume, r.mode);
+    r.subtotal = r.freight + r.handling + r.packingCost + r.duty + r.insurance + r.surcharge + r.clearance + r.docs;
   }
 
-  const sum = (k: keyof ShipmentLine) => rows.reduce((a, r) => a + (r[k] as number), 0);
+  const rows = [...imports.values()];
+
+  const importVolume = rows.reduce((a, r) => a + r.volume, 0);
+  const exportFreight = entries.reduce((a, e) => a + e.breakdown.exportFreight, 0);
+  const exportDuty = entries.reduce((a, e) => a + e.breakdown.exportDuty, 0);
+  const totalWeight = entries.reduce((a, e) => a + e.line.weight, 0);
+
+  if (!localDelivery) {
+    rows.push({
+      leg: "Export",
+      origin: `${WORKSHOP.city}, ${WORKSHOP.country}`,
+      mode: dest.region === "GCC" ? "Road (GCC)" : "Sea + road",
+      packing: "Equipment seaworthy packing, skids and cradles",
+      weight: totalWeight,
+      volume: totalWeight / 2200,
+      containers: containersFor(totalWeight / 1000, totalWeight / 2200, "Sea + road"),
+      freight: exportFreight,
+      handling: (totalWeight / 1000) * settings.portHandling,
+      packingCost: 0,
+      duty: exportDuty,
+      insurance: entries.reduce((a, e) => a + e.breakdown.insurance / 2, 0),
+      surcharge: entries.reduce((a, e) => a + e.breakdown.surcharge / 2, 0),
+      clearance: dest.clearance,
+      docs: settings.documentation + (dest.region === "GCC" ? 0 : 60),
+      lines: entries.length,
+      subtotal: 0,
+      note:
+        dest.region === "GCC"
+          ? `Bahrain-origin equipment into ${dest.name} at 0% duty under the GCC common tariff — certificate of origin required`
+          : `${dest.note}. Duty is charged on the declared export value (landed material + ${Math.round(
+              EXPORT_VALUE_UPLIFT * 100,
+            )}% fabrication uplift)`,
+    });
+    const last = rows[rows.length - 1];
+    last.subtotal =
+      last.freight + last.handling + last.packingCost + last.duty + last.insurance + last.surcharge + last.clearance + last.docs;
+  }
+
+  const sum = (k: keyof ShipmentLine) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
   const material = entries.reduce((a, e) => a + e.line.amount, 0);
-  const logistics = sum("freight") + sum("handling") + sum("packingCost") + sum("duty") + sum("insurance") + sum("surcharge") + sum("clearance") + sum("docs");
+  const logistics =
+    sum("freight") + sum("handling") + sum("packingCost") + sum("duty") + sum("insurance") + sum("surcharge") + sum("clearance") + sum("docs");
+
   return {
     rows,
-    weight: sum("weight"),
-    volume: rows.reduce((a, r) => a + r.volume, 0),
+    weight: totalWeight,
+    volume: importVolume,
+    importFreight: rows.filter((r) => r.leg === "Import").reduce((a, r) => a + r.freight, 0),
+    exportFreight,
     freight: sum("freight"),
     handling: sum("handling"),
     packing: sum("packingCost"),
+    importDuty: rows.filter((r) => r.leg === "Import").reduce((a, r) => a + r.duty, 0),
+    exportDuty,
     duty: sum("duty"),
     insurance: sum("insurance"),
     surcharge: sum("surcharge"),
@@ -489,8 +642,10 @@ export function shipmentPlan(
     logistics,
     material,
     delivered: material + logistics,
-    containers: rows.filter((r) => /40ft/.test(r.containers)).reduce((a, r) => a + parseInt(r.containers, 10) || 0, 0),
-    abnormal: rows.filter((r) => r.clearance >= 0 && /heavy|Breakbulk|FR/i.test(r.mode)).length,
+    containers: rows
+      .filter((r) => /\d+ × 40ft/.test(r.containers))
+      .reduce((a, r) => a + (parseInt(r.containers, 10) || 0), 0),
+    abnormal: rows.filter((r) => /heavy|Breakbulk|FR/i.test(r.mode)).length,
   };
 }
 

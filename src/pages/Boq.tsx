@@ -9,6 +9,7 @@ import {
   landedCost,
   originNames,
   shipmentPlan,
+  WORKSHOP,
 } from "../lib/logistics";
 import { CURRENCIES, getCurrency } from "../lib/currency";
 import type { ItemCategory } from "../lib/bom";
@@ -108,9 +109,10 @@ export default function BoqPage() {
             Every equipment combined into one procurement view: plate groups are nested on standard{" "}
             {rates.plateWidth}×{rates.plateLength} plates at {Math.round(rates.plateUtilisation * 100)}%
             yield, nozzles/flanges consolidated and repeat equipment batched. Each line is sourced from its
-            own country and landed at <b>{dest.name}</b> — road inside the GCC, sea + road from everywhere
-            else, with duty, insurance, clearing and documentation. Ex-works prices are in {cur.name} ({cur.code})
-            and exclude VAT.
+            own country and imported into our <b>{WORKSHOP.city}, {WORKSHOP.country}</b> workshop, then the
+            finished equipment is delivered to <b>{dest.name}</b> — road inside the GCC, sea + road from
+            everywhere else, with import duty, export duty, insurance, clearing and documentation. Ex-works
+            prices are in {cur.name} ({cur.code}) and exclude VAT.
           </div>
         </div>
         <div className="actions">
@@ -177,10 +179,10 @@ export default function BoqPage() {
       </div>
 
       <div className="grid g4" style={{ marginBottom: 14 }}>
-        <Kpi k="Landed / delivered" v={money(totalNet + totalLanded)} n={`to ${dest.name} · ${logistics.incoterm}`} />
-        <Kpi k="Import & freight" v={money(plan.freight + plan.handling + plan.packing)} n={`${originCount} supply countries · ${plan.containers} × 40ft`} />
-        <Kpi k="Duty & clearance" v={money(plan.duty + plan.clearance + plan.docs)} n={`${fmt(plan.weight ? (plan.duty / Math.max(1, plan.material)) * 100 : 0, 1)}% effective on CIF`} />
-        <Kpi k="Insurance & surcharge" v={money(plan.insurance + plan.surcharge)} n={`${fmt(logistics.insurancePct, 2)}% marine cover · war-risk included`} />
+        <Kpi k="Delivered to client" v={money(totalNet + totalLanded)} n={`${WORKSHOP.city} workshop → ${dest.name} · ${logistics.incoterm}`} />
+        <Kpi k="Import into Bahrain" v={money(plan.importFreight + plan.importDuty + plan.packing)} n={`${originCount} supply countries · duty ${money(plan.importDuty)}`} />
+        <Kpi k="Export to client" v={money(plan.exportFreight + plan.exportDuty)} n={dest.region === "GCC" ? `0% GCC common tariff · ${plan.containers} × 40ft` : `destination duty ${money(plan.exportDuty)} · ${plan.containers} × 40ft`} />
+        <Kpi k="Clearing & documents" v={money(plan.clearance + plan.docs)} n={`import file + export file · insurance ${money(plan.insurance + plan.surcharge)}`} />
       </div>
 
       <div className="card">
@@ -269,9 +271,13 @@ export default function BoqPage() {
           </div>
           <div className="divider" />
           <div className="small dim">
-            {dest.name}: {dest.note}. Port {dest.port} · {dest.inlandKm} km inland · import duty {dest.duty}%
-            {dest.warRiskPct ? ` · war-risk ${dest.warRiskPct}%` : ""}. Landed cost is CIF + duty + clearing +
-            documentation; clearing and documentation are charged once per origin per shipment.
+            Workshop: <b>{WORKSHOP.city}, {WORKSHOP.country}</b> — material is imported into Bahrain first and the
+            finished equipment is exported from Bahrain to the client. A Bahrain client pays no export leg and no
+            duty on Bahrain-made equipment; a GCC client clears at 0% under the common tariff with a certificate of
+            origin; other destinations pay their tariff on the declared export value. {dest.name}: {dest.note}.
+            Port {dest.port} · {dest.inlandKm} km inland · destination duty {dest.duty}% · import duty into Bahrain
+            5%{dest.warRiskPct ? ` · war-risk ${dest.warRiskPct}%` : ""}. Clearing and documentation are charged
+            once per shipment on each leg.
           </div>
         </div>
       </div>
@@ -314,7 +320,7 @@ export default function BoqPage() {
                 <th className="num">Qty</th><th className="num">Spare</th><th>Unit</th><th className="num">Weight (kg)</th>
                 <th className="num">Rate</th><th className="num">Ex-works</th>
                 <th>Origin</th><th>Mode / packing</th>
-                <th className="num">Freight</th><th className="num">Duty</th><th className="num">Insur.</th>
+                <th className="num">Import / export freight</th><th className="num">Duty imp / exp</th><th className="num">Insur.</th>
                 <th className="num">Landed</th><th>Tags</th>
               </tr>
             </thead>
@@ -343,14 +349,22 @@ export default function BoqPage() {
                         <option key={n} value={n}>{n}</option>
                       ))}
                     </select>
-                    <div className="est-sub">{origin === dest.name ? "domestic" : `duty ${b.dutyPct}%`}</div>
+                    <div className="est-sub">
+                      {origin === WORKSHOP.country ? "local supply" : `import duty ${b.importDutyPct}%`}
+                    </div>
                   </td>
                   <td className="small" title={`${b.note} · ${b.equipment}`}>
                     {b.mode}
                     <div className="est-sub">{b.equipment}</div>
                   </td>
-                  <td className="num">{fmt(b.freight * cur.perBhd, cur.decimals)}</td>
-                  <td className="num">{fmt(b.duty * cur.perBhd, cur.decimals)}</td>
+                  <td className="num">
+                    {fmt(b.freight * cur.perBhd, cur.decimals)}
+                    <div className="est-sub">{fmt(b.importFreight * cur.perBhd, cur.decimals)} / {fmt(b.exportFreight * cur.perBhd, cur.decimals)}</div>
+                  </td>
+                  <td className="num">
+                    {fmt(b.duty * cur.perBhd, cur.decimals)}
+                    <div className="est-sub">{fmt(b.importDuty * cur.perBhd, cur.decimals)} / {fmt(b.exportDuty * cur.perBhd, cur.decimals)}</div>
+                  </td>
                   <td className="num">{fmt(b.insurance * cur.perBhd, cur.decimals)}</td>
                   <td className="num">{fmt((l.amount + b.total) * cur.perBhd, cur.decimals)}</td>
                   <td className="taglist">
@@ -381,7 +395,7 @@ export default function BoqPage() {
 
       <div className="card">
         <div className="card-head">
-          <h3>Import, freight &amp; clearance — shipment plan</h3>
+          <h3>Two-leg shipment plan — import into Bahrain, export to {dest.name}</h3>
           <span className="hint">
             {fmtInt(plan.weight)} kg · {fmt(plan.volume, 1)} m³ · {plan.rows.length} supply countries ·{" "}
             {plan.containers} × 40ft equivalent
@@ -391,7 +405,7 @@ export default function BoqPage() {
           <table className="data">
             <thead>
               <tr>
-                <th>Origin</th><th>Mode</th><th>Packing</th><th className="num">Weight (kg)</th>
+                <th>Leg</th><th>Origin</th><th>Mode</th><th>Packing</th><th className="num">Weight (kg)</th>
                 <th className="num">m³</th><th>Containers</th>
                 <th className="num">Freight</th><th className="num">Handling</th><th className="num">Packing</th>
                 <th className="num">Duty</th><th className="num">Insurance</th><th className="num">Clearing</th>
@@ -400,7 +414,8 @@ export default function BoqPage() {
             </thead>
             <tbody>
               {plan.rows.map((r) => (
-                <tr key={r.origin}>
+                <tr key={r.leg + r.origin}>
+                  <td><span className={`pill ${r.leg === "Export" ? "ok" : ""}`}>{r.leg}</span></td>
                   <td>
                     {r.origin}
                     <div className="est-sub">{r.note}</div>
@@ -421,12 +436,12 @@ export default function BoqPage() {
                 </tr>
               ))}
               {plan.rows.length === 0 && (
-                <tr><td colSpan={14} className="dim" style={{ padding: 10 }}>No procured parts in this scope.</td></tr>
+                <tr><td colSpan={15} className="dim" style={{ padding: 10 }}>No procured parts in this scope.</td></tr>
               )}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={3}>Total logistics</td>
+                <td colSpan={4}>Total logistics</td>
                 <td className="num">{fmtInt(plan.weight)}</td>
                 <td className="num">{fmt(plan.volume, 1)}</td>
                 <td />
@@ -443,10 +458,12 @@ export default function BoqPage() {
           </table>
         </div>
         <div className="est-note">
-          FCL on the sea lane, GCC road for GCC-to-GCC supply, flat rack / low-bed / breakbulk where a single
-          piece leaves the container envelope. Clearing and documentation are charged once per origin;
-          insurance is on material + freight; duty is on CIF at the {dest.name} tariff. Air freight is not
-          modelled — it is only justified for spares against a shutdown.
+          Leg 1 brings raw material into the {WORKSHOP.city} workshop and attracts 5% Bahrain import duty; leg 2
+          ships the finished equipment from Bahrain and attracts the client's tariff — 0% inside the GCC with a
+          certificate of origin, a declared export value elsewhere. FCL on the sea lane, GCC road for regional
+          delivery, flat rack / low-bed / breakbulk where a single piece leaves the container envelope. Clearing
+          and documentation are charged once per shipment on each leg; insurance covers material and freight on
+          both. Air freight is not modelled — it is only justified for spares against a shutdown.
         </div>
       </div>
 
@@ -502,8 +519,11 @@ export default function BoqPage() {
                 <tr><td>Painting &amp; insulation</td><td className="num">{money(finishCost)}</td></tr>
                 <tr><td>Overhead + profit + freight</td><td className="num">{money(overheads)}</td></tr>
                 <tr><td><b>Ex-works total (excl. VAT)</b></td><td className="num"><b>{money(totalNet)}</b></td></tr>
-                <tr><td>Import freight, handling &amp; packing</td><td className="num">{money(plan.freight + plan.handling + plan.packing)}</td></tr>
-                <tr><td>Duty, clearing &amp; documentation</td><td className="num">{money(plan.duty + plan.clearance + plan.docs)}</td></tr>
+                <tr><td>Import freight, packing &amp; handling — into Bahrain</td><td className="num">{money(plan.importFreight + plan.packing + plan.handling / 2)}</td></tr>
+                <tr><td>Import duty — Bahrain 5% on CIF</td><td className="num">{money(plan.importDuty)}</td></tr>
+                <tr><td>Export freight &amp; handling — {WORKSHOP.city} to {dest.name}</td><td className="num">{money(plan.exportFreight + plan.handling / 2)}</td></tr>
+                <tr><td>Export duty — {dest.region === "GCC" ? "0% GCC common tariff" : `${dest.name} tariff`}</td><td className="num">{money(plan.exportDuty)}</td></tr>
+                <tr><td>Clearing, brokerage &amp; documentation — both legs</td><td className="num">{money(plan.clearance + plan.docs)}</td></tr>
                 <tr><td>Marine insurance &amp; surcharges</td><td className="num">{money(plan.insurance + plan.surcharge)}</td></tr>
                 <tr><td><b>Delivered {dest.name} ({logistics.incoterm})</b></td><td className="num"><b>{money(totalNet + plan.logistics)}</b></td></tr>
                 <tr><td className="dim">VAT @ {rates.vatPct}% — not included</td><td className="num dim">{money(totalVat)}</td></tr>
