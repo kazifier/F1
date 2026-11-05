@@ -73,8 +73,7 @@ export default function BoqPage() {
     () =>
       boq.lines.map((line) => {
         const origin = sourcing[line.key] ?? logistics.defaultOrigin;
-        const ctx = line.weight > 25000 ? { maxLengthMm: 13000 } : {};
-        return { line, origin, breakdown: landedCost(line, origin, logistics, ctx) };
+        return { line, origin, breakdown: landedCost(line, origin, logistics) };
       }),
     [boq.lines, sourcing, logistics],
   );

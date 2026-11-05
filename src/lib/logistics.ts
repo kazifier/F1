@@ -165,7 +165,10 @@ export interface Packing {
  * container, and a pallet of gaskets should not charter a low-bed.
  */
 export function packingFor(o: {
+  /** total tonnes on the line — drives how many units move */
   weightKg: number;
+  /** heaviest single piece — drives lift type and oversize */
+  pieceKg?: number;
   origin: OriginCountry;
   dest: Destination;
   maxLengthMm?: number;
@@ -173,56 +176,83 @@ export function packingFor(o: {
   maxHeightMm?: number;
 }): Packing {
   const t = o.weightKg / 1000;
+  const pieceT = (o.pieceKg ?? o.weightKg) / 1000;
   const len = o.maxLengthMm ?? 0;
   const width = o.maxWidthMm ?? 0;
   const height = o.maxHeightMm ?? 0;
   const oversize = len > 12100 || width > 2400 || height > 2600;
-  const heavy = t > 28000;
+  const heavy = pieceT > 28;
   const domestic = o.origin.name === o.dest.name;
   const bothGcc = o.origin.region === "GCC" && o.dest.region === "GCC";
+  const units = Math.max(1, Math.ceil(t / (bothGcc || domestic ? 24 : 26)));
+  const n40 = `× 40ft`;
+  const count = (mode: string) => (units > 1 ? `${units} ${mode}` : `1 ${mode}`);
 
   if (heavy || len > 18000) {
     return {
       mode: domestic || bothGcc ? "Road (GCC)" : "Breakbulk / heavy lift",
-      equipment: len > 18000 ? "Extendable / blade trailer" : "Low-bed trailer 60 t",
+      equipment:
+        len > 18000
+          ? `${count("extendable / blade trailer")}`
+          : `${count("low-bed trailer 60 t")}`,
       oversize: true,
       heavy: true,
-      note: `single piece ${t.toFixed(0)} t${len ? ` × ${(len / 1000).toFixed(1)} m` : ""} — abnormal load, route survey and escorts`,
+      note: `single piece ${pieceT.toFixed(0)} t${len ? ` × ${(len / 1000).toFixed(1)} m` : ""} of ${t.toFixed(
+        0,
+      )} t on the line — abnormal load, route survey and escorts`,
     };
   }
   if (oversize) {
     return {
       mode: domestic || bothGcc ? "Road (GCC)" : "Sea + road (heavy lift)",
-      equipment: "Flat rack 40ft + low-bed",
+      equipment: `${count("flat rack 40ft")} + low-bed`,
       oversize: true,
       heavy: false,
-      note: "outside container envelope — flat rack on deck, low-bed at both ends",
+      note: `piece leaves the container envelope (${pieceT.toFixed(0)} t) — flat rack on deck, low-bed at both ends`,
     };
   }
   if (domestic) {
     return {
       mode: "Road (domestic)",
-      equipment: t > 20 ? "Flat-bed trailer 40ft" : "Flat-bed / closed body truck",
+      equipment: units > 1 ? `${units} × flat-bed trailer 40ft` : "Flat-bed / closed body truck",
       oversize: false,
       heavy: false,
-      note: "domestic delivery, no import clearance",
+      note: `${t.toFixed(1)} t on ${units} load${units > 1 ? "s" : ""}, domestic delivery, no import clearance`,
     };
   }
   if (bothGcc) {
     return {
       mode: "Road (GCC)",
-      equipment: t > 24 ? "Flat-bed trailer 40ft" : "Flat-bed trailer / 20ft container on chassis",
+      equipment: units > 1 ? `${units} × flat-bed trailer 40ft` : "Flat-bed trailer / 20ft container on chassis",
       oversize: false,
       heavy: false,
-      note: "GCC road transit with customs transit document at the border",
+      note: `${t.toFixed(1)} t on ${units} load${units > 1 ? "s" : ""}, GCC road transit with border customs transit document`,
+    };
+  }
+  if (t <= 0.5) {
+    return {
+      mode: "Sea + road",
+      equipment: "LCL consolidation",
+      oversize: false,
+      heavy: false,
+      note: `${t.toFixed(2)} t — LCL groupage, CFS charges and longer transit`,
+    };
+  }
+  if (t <= 3) {
+    return {
+      mode: "Sea + road",
+      equipment: `${units} × 20ft container (FCL)`,
+      oversize: false,
+      heavy: false,
+      note: `${t.toFixed(1)} t — one 20ft, cheaper than LCL at this weight`,
     };
   }
   return {
-    mode: t > 5 ? "Sea + road" : "Sea + road",
-    equipment: t > 20 ? "40ft container (FCL)" : t > 3 ? "20ft container (FCL)" : "LCL consolidation",
+    mode: "Sea + road",
+    equipment: `${units} ${n40} (FCL)`,
     oversize: false,
     heavy: false,
-    note: t > 3 ? "FCL, port handling at both ends" : "LCL groupage, longer transit and CFS charges",
+    note: `${t.toFixed(0)} t — ${units} × 40ft FCL at 26 t payload, port handling at both ends`,
   };
 }
 
@@ -245,6 +275,25 @@ export interface LandedBreakdown {
 const MIN_FREIGHT = 6; // BHD per consolidated line
 
 /**
+ * Largest single piece behind a BOQ line. A 230 t tube line is 230 t of tubes on
+ * a ship, not one 230 t lift — the mode and any abnormal-load surcharge must be
+ * driven by the heaviest piece that is actually handled, or every consolidated
+ * line would be quoted as a heavy lift.
+ */
+const PIECE_CAP: Record<ItemCategory, number> = {
+  Plate: 4000,
+  Pipe: 2500,
+  Flange: 1200,
+  Fitting: 800,
+  Structure: 3000,
+  Consumable: 500,
+  Service: 100000,
+};
+
+export const pieceWeightOf = (line: { category: ItemCategory; weight: number }) =>
+  Math.min(line.weight, PIECE_CAP[line.category] ?? 4000);
+
+/**
  * Landed cost of one BOQ line: packing + freight + handling + insurance + duty
  * on the CIF value. Clearance and documentation are per shipment, so they are
  * carried by shipmentPlan() rather than smeared over the lines.
@@ -258,8 +307,10 @@ export function landedCost(
   const origin = originOf(originName);
   const dest = destinationOf(settings.destination);
   const t = line.weight / 1000;
+  const piece = pieceWeightOf(line);
   const pack = packingFor({
     weightKg: line.weight,
+    pieceKg: piece,
     origin,
     dest,
     ...ctx,
@@ -287,7 +338,10 @@ export function landedCost(
 
   const pct = dutyPct(dest, line.category, settings.dutyOverridePct);
   const duty = domestic ? 0 : (line.amount + freight + insurance) * (pct / 100);
-  const surcharge = pack.oversize ? (line.amount + freight) * (settings.abnormalLoadPct / 100) : 0;
+  // the abnormal-load surcharge rides on the share of the freight that belongs
+  // to the oversize / heavy piece, not on a whole consolidated line
+  const share = line.weight > 0 ? piece / line.weight : 0;
+  const surcharge = pack.oversize ? freight * share * (settings.abnormalLoadPct / 100) : 0;
 
   return {
     origin: origin.name,
