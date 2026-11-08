@@ -5,6 +5,7 @@ import type { Equipment, PartRow, RateBook } from "./types";
 import { materialByName, pipeOd, pipeWall, flangeMass, studSpec, MATERIALS, type StudSpec } from "./catalog";
 import { PART_BY_KEY } from "./parts";
 import { buildExchangerBom } from "./exchangerParts";
+import { nozzleJoints } from "./nozzleDetail";
 import { DEFAULT_WELD, weldSummary } from "./welding";
 
 // All rates are in BHD (the facility currency). Every amount in the app is a
@@ -142,6 +143,9 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
     });
   };
 
+  // SRN marks come out of the UG-37 check as their own BOQ item
+  const jointByMark = new Map(nozzleJoints(eq).map((j) => [j.mark, j]));
+
   // studs + nuts are raised as separate procurement lines with installed
   // quantity, spare quantity and dimensions on each
   const pushFasteners = (o: {
@@ -276,7 +280,22 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
           const fmat = s(row, "noz_flgMat") || pmat;
           const rating = s(row, "nz_rating") || "150#";
           const ratingKey = rating.replace("#", "");
-          if (wall > 0 && od > 0) {
+          // self-reinforced nozzles are carried as one line — neck and flange as
+          // a single item, with dimensions and mass, and no RF pad ordered
+          const joint = jointByMark.get(`N${String(idx + 1).padStart(2, "0")}`);
+          const isSrn = joint?.type === "SRN";
+          if (isSrn && joint) {
+            push({
+              partKey: "nozzle", partLabel: "SRN nozzle", itemCode,
+              category: "Pipe",
+              description: `SRN nozzle ${rowName} ${nps} ${rating} — self-reinforced neck, no RF pad`,
+              material: pmat, qty: 1, unit: "no",
+              spec: `${joint.flange.type} ${joint.flange.size} ${joint.flange.rating} · neck Ø${joint.neck.od.toFixed(1)} × ${joint.neck.wall.toFixed(1)} mm × ${joint.neck.length} lg · flange ${joint.flange.thk} thk · ${joint.weight.toFixed(1)} kg/joint`,
+              weight: joint.weight, thickness: joint.neck.wall,
+              weldLength: Math.PI * mmToM(joint.neck.od) * 2, rate: 0,
+            });
+          }
+          if (!isSrn && wall > 0 && od > 0) {
             push({
               partKey: "nozzle", partLabel: "Nozzle neck", itemCode,
               category: "Pipe", description: `Nozzle ${rowName} ${nps} ${sch} × ${len} lg`,
@@ -285,7 +304,7 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
             });
           }
           const fm = flangeMass(nps, ratingKey);
-          if (fm > 0) {
+          if (!isSrn && fm > 0) {
             push({
               partKey: "nozzle", partLabel: "Nozzle flange", itemCode: `${itemCode}/F`,
               category: "Flange", description: `${s(row, "nz_face") || "RF"} flange ${nps} ${rating} ${s(row, "nz_type") || "WN"}`,
@@ -300,7 +319,7 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
               weight: fm * 1.15, rate: 0,
             });
           }
-          if (s(row, "nz_pad") === "Yes") {
+          if (!isSrn && s(row, "nz_pad") === "Yes") {
             const pod = n(row, "nz_padOd"), pthk = n(row, "nz_padThk");
             if (pod > 0 && pthk > 0) {
               const area = (Math.PI / 4) * (Math.pow(mmToM(pod), 2) - Math.pow(mmToM(od), 2));

@@ -1,10 +1,14 @@
 import { useMemo, useState } from "react";
 import { useStore, fmt } from "../lib/store";
 import { runDesign, nozzleNeckUG45, areaReinforcement } from "../lib/asme";
-import { MATERIALS, HEAD_TYPES, NPS_LIST, SCHEDULE_LIST, materialByName, allowableStress, pipeOd, pipeWall } from "../lib/catalog";
+import {
+  MATERIALS, HEAD_TYPES, NPS_LIST, SCHEDULE_LIST, materialByName, allowableStress,
+  pipeOd, pipeWall, flangeMass, flangeThk,
+} from "../lib/catalog";
 import type { NozzleInput } from "../lib/types";
 import { defaultExchangerNozzles, designExchanger } from "../lib/tema";
-import { exportCsv } from "../lib/bom";
+import { exportCsv, pipeMass, plateMass } from "../lib/bom";
+import { PROJECT_UNITS, parseNozzles, isManway } from "../data/units";
 
 interface Sheet {
   tag: string;
@@ -46,6 +50,30 @@ const blank: Sheet = {
   radiography: "Spot RT",
 };
 
+interface ManwayRow {
+  id: string;
+  mark: string;
+  nps: string;
+  rating: string;
+  /** neck projection, mm */
+  projection: number;
+}
+
+const blankManway = (i: number): ManwayRow => ({
+  id: `mw-${Date.now()}-${i}`,
+  mark: `M${i}`,
+  nps: '20"',
+  rating: "150#",
+  projection: 250,
+});
+
+/** "24 x 20" / "20" → 20" */
+const toNps = (raw: string): string => {
+  const sized = raw.split(/[x×]/)[0].trim();
+  if (!/^\d/.test(sized)) return "";
+  return `${sized.replace(/^(\d+)\.5$/, "$1.1/2").replace(/^(\d+)\.25$/, "$1/4")}"`;
+};
+
 const blankNozzle = (i: number): NozzleInput => ({
   id: `nz-${Date.now()}-${i}`,
   mark: `N${i}`,
@@ -68,6 +96,7 @@ export default function DatasheetPage() {
     { ...blankNozzle(2), mark: "N2", nps: '6"', schedule: "40", repad: "Yes", padThickness: 14, padOd: 260 },
     { ...blankNozzle(3), mark: "N3", nps: '2"', schedule: "80", repad: "No" },
   ]);
+  const [manways, setManways] = useState<ManwayRow[]>([blankManway(1)]);
   const [sourceId, setSourceId] = useState("");
 
   const loadFrom = (id: string) => {
@@ -111,6 +140,7 @@ export default function DatasheetPage() {
           repad: "No",
         })),
       );
+      setManways([]);
       return;
     }
     const sh = eq.parts.shell?.[0] ?? {};
@@ -151,6 +181,27 @@ export default function DatasheetPage() {
           repad: r.nz_pad === "Yes" ? "Yes" : "No",
         })),
     );
+
+    // every manway on the vessel: part rows first, then the datasheet register
+    const mwRows: ManwayRow[] = (eq.parts.manway ?? [])
+      .filter((r) => r.mw_size)
+      .map((r, i) => ({
+        id: `mw-${eq.id}-${i}`,
+        mark: `M${i + 1}`,
+        nps: String(r.mw_size),
+        rating: String(r.mw_rating || "150#"),
+        projection: 250,
+      }));
+    if (mwRows.length === 0) {
+      const register = PROJECT_UNITS.find((u) => u.tag === eq.tag);
+      (register ? parseNozzles(register.nozzles) : [])
+        .filter((n) => isManway(n) && /^\d/.test(n.size))
+        .forEach((n, i) => {
+          const nps = toNps(n.size);
+          if (nps) mwRows.push({ id: `mw-${eq.id}-r${i}`, mark: n.mark, nps, rating: "150#", projection: 250 });
+        });
+    }
+    setManways(mwRows);
   };
 
   const design = useMemo(
@@ -210,13 +261,85 @@ export default function DatasheetPage() {
       legShell: 8,
       legPad: nz.repad === "Yes" ? 8 : 0,
     });
-    return { nz, od, schWall, provided, ug45, reinf, innerD };
+    // the same joint with no pad: if it already covers A it is self-reinforced
+    const bare = areaReinforcement({
+      d: innerD,
+      shellT: sheet.shellThk,
+      tr: Math.max(design.shellCirc.base, design.shellLong.base),
+      E1: sheet.E,
+      F: 1,
+      tn: provided,
+      trn: ug45.taBase,
+      fr1: 1,
+      fr2: 1,
+      padWidth: 0,
+      padThk: 0,
+      legShell: 8,
+      legPad: 0,
+    });
+    const srn = bare.adequate;
+    const neckKg = pipeMass(od, provided, nz.projection || 150, "SA-106 Gr.B");
+    const flangeKg = flangeMass(nz.nps, "150");
+    const padKg =
+      nz.repad === "Yes" && nz.padOd > 0 && nz.padThickness > 0
+        ? plateMass((Math.PI / 4) * (Math.pow(nz.padOd / 1000, 2) - Math.pow(od / 1000, 2)), nz.padThickness, "SA-516 Gr.70")
+        : 0;
+    return { nz, od, schWall, provided, ug45, reinf, innerD, bare, srn, weight: neckKg + flangeKg + padKg };
   });
+
+  // every manway is checked on the same basis as a nozzle, with a blind cover
+  // and a plate (rolled) neck rather than a pipe schedule
+  const manwayResults = manways.map((mw) => {
+    const od = pipeOd(mw.nps) || 508;
+    const wall = Math.max(10, sheet.shellThk);
+    const ug45 = nozzleNeckUG45(
+      sheet.designPressure / 1000,
+      mw.nps,
+      "40",
+      SnozAllowable,
+      design.S,
+      sheet.E,
+      sheet.ca,
+      shellRequired,
+      sheet.radiography === "Full RT",
+    );
+    const innerD = od - 2 * wall + 2 * sheet.ca;
+    const reinf = areaReinforcement({
+      d: innerD,
+      shellT: sheet.shellThk,
+      tr: Math.max(design.shellCirc.base, design.shellLong.base),
+      E1: sheet.E,
+      F: 1,
+      tn: wall,
+      trn: ug45.taBase,
+      fr1: 1,
+      fr2: 1,
+      padWidth: 0,
+      padThk: 0,
+      legShell: 8,
+      legPad: 0,
+    });
+    const coverKg = flangeMass(mw.nps, mw.rating.replace("#", "")) || flangeMass(mw.nps, "150");
+    return {
+      mw,
+      od,
+      wall,
+      flangeThk: flangeThk(mw.nps, mw.rating.replace("#", "")) || flangeThk(mw.nps, "150"),
+      ug45,
+      reinf,
+      srn: reinf.adequate,
+      weight: pipeMass(od, wall, mw.projection, "SA-106 Gr.B") + coverKg * 2,
+    };
+  });
+
+  const srnNozzles = results.filter((r) => r.srn);
+  const srnWeight = [...results, ...manwayResults].reduce((a, r) => a + (r.srn ? r.weight : 0), 0);
 
   const anyFail =
     sheet.shellThk < shellRequired ||
     sheet.headThk < design.head.required ||
-    results.some((r) => r.provided < r.ug45.tUG45 || !r.reinf.adequate);
+    results.some((r) => r.provided < r.ug45.tUG45 || !r.reinf.adequate) ||
+    manwayResults.some((r) => r.wall < r.ug45.tUG45 || !r.reinf.adequate);
 
   const set = <K extends keyof Sheet>(k: K, v: Sheet[K]) => setSheet((s) => ({ ...s, [k]: v }));
 
@@ -256,6 +379,22 @@ export default function DatasheetPage() {
                     "A required": r.reinf.A.toFixed(0),
                     "A available": r.reinf.available.toFixed(0),
                     "UG-37": r.reinf.adequate ? "OK" : "REINFORCE",
+                    "SRN": r.srn ? "Yes — self-reinforced" : "No — pad required",
+                    "Weight (kg)": r.weight.toFixed(1),
+                  })),
+                  ...manwayResults.map((r) => ({
+                    Item: `Manway ${r.mw.mark}`,
+                    Size: r.mw.nps,
+                    Schedule: `plate ${r.wall.toFixed(0)}`,
+                    "OD (mm)": r.od.toFixed(1),
+                    "t UG-45 req": r.ug45.tUG45.toFixed(2),
+                    "t provided": r.wall.toFixed(2),
+                    "UG-45": r.wall >= r.ug45.tUG45 ? "OK" : "THIN",
+                    "A required": r.reinf.A.toFixed(0),
+                    "A available": r.reinf.available.toFixed(0),
+                    "UG-37": r.reinf.adequate ? "OK" : "REINFORCE",
+                    "SRN": r.srn ? "Yes — self-reinforced" : "No — pad required",
+                    "Weight (kg)": r.weight.toFixed(1),
                   })),
                   { Item: "Shell", "t required": shellRequired.toFixed(2), "t provided": sheet.shellThk },
                   { Item: "Head", "t required": design.head.required.toFixed(2), "t provided": sheet.headThk },
@@ -422,7 +561,9 @@ export default function DatasheetPage() {
         <div className="card-head">
           <h3>Nozzle schedule — UG-45 &amp; UG-37</h3>
           <div className="row">
-            <span className="hint">neck thickness blank = schedule wall</span>
+            <span className="hint">
+              {srnNozzles.length} of {results.length} nozzles self-reinforced · SRN {fmt(srnWeight, 0)} kg
+            </span>
             <button className="btn btn-sm" onClick={() => setNozzles((n) => [...n, blankNozzle(n.length + 1)])}>
               + nozzle
             </button>
@@ -436,7 +577,8 @@ export default function DatasheetPage() {
                 <th className="num">Sch wall</th><th className="num">Neck as-supplied</th>
                 <th>RF Pad</th><th className="num">Pad thk</th><th className="num">Pad OD</th>
                 <th className="num">t UG-45</th><th>UG-45</th>
-                <th className="num">A req</th><th className="num">A avail</th><th>UG-37</th><th />
+                <th className="num">A req</th><th className="num">A avail</th><th>UG-37</th>
+                <th>SRN</th><th className="num">Weight</th><th />
               </tr>
             </thead>
             <tbody>
@@ -500,6 +642,8 @@ export default function DatasheetPage() {
                       ? `OK (+${fmt(r.reinf.available - r.reinf.A, 0)})`
                       : `Deficit ${fmt(r.reinf.deficit, 0)} mm²`}
                   </td>
+                  <td>{r.srn ? <b className="ok">SRN</b> : <span className="bad">pad</span>}</td>
+                  <td className="num">{fmt(r.weight, 1)} kg</td>
                   <td>
                     <button
                       className="btn btn-sm btn-ghost"
@@ -512,7 +656,80 @@ export default function DatasheetPage() {
                 </tr>
               ))}
               {results.length === 0 && (
-                <tr><td colSpan={16} className="dim">No nozzles — press “+ nozzle”.</td></tr>
+                <tr><td colSpan={18} className="dim">No nozzles — press “+ nozzle”.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Manways — UG-45 &amp; UG-37</h3>
+          <div className="row">
+            <span className="hint">
+              {manwayResults.length} manway{manwayResults.length === 1 ? "" : "s"} ·{" "}
+              {fmt(manwayResults.reduce((a, r) => a + r.weight, 0), 0)} kg · plate neck on the shell thickness
+            </span>
+            <button className="btn btn-sm" onClick={() => setManways((m) => [...m, blankManway(m.length + 1)])}>
+              + manway
+            </button>
+          </div>
+        </div>
+        <div className="card-body tight scroll-x">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Mark</th><th>Size</th><th>Rating</th>
+                <th className="num">Neck Ø</th><th className="num">Neck wall</th><th className="num">Cover thk</th>
+                <th className="num">t UG-45</th><th>UG-45</th>
+                <th className="num">A req</th><th className="num">A avail</th><th>UG-37</th>
+                <th>SRN</th><th className="num">Weight</th><th />
+              </tr>
+            </thead>
+            <tbody>
+              {manwayResults.map((r, i) => (
+                <tr key={r.mw.id}>
+                  <td>
+                    <input style={{ width: 46 }} value={r.mw.mark} onChange={(e) => updateManway(i, { mark: e.target.value })} />
+                  </td>
+                  <td>
+                    <select value={r.mw.nps} onChange={(e) => updateManway(i, { nps: e.target.value })}>
+                      {NPS_LIST.map((n) => <option key={n}>{n}</option>)}
+                    </select>
+                  </td>
+                  <td>
+                    <select value={r.mw.rating} onChange={(e) => updateManway(i, { rating: e.target.value })}>
+                      {["150#", "300#", "600#", "900#", "1500#", "2500#"].map((x) => <option key={x}>{x}</option>)}
+                    </select>
+                  </td>
+                  <td className="num">{fmt(r.od, 1)}</td>
+                  <td className="num">{fmt(r.wall, 1)}</td>
+                  <td className="num">{fmt(r.flangeThk, 1)}</td>
+                  <td className="num"><b>{fmt(r.ug45.tUG45, 2)}</b></td>
+                  <td className={r.wall >= r.ug45.tUG45 ? "ok" : "bad"}>
+                    {r.wall >= r.ug45.tUG45 ? `OK (+${fmt(r.wall - r.ug45.tUG45, 2)})` : `Thin ${fmt(r.ug45.tUG45 - r.wall, 2)}`}
+                  </td>
+                  <td className="num">{fmt(r.reinf.A, 0)}</td>
+                  <td className="num">{fmt(r.reinf.available, 0)}</td>
+                  <td className={r.reinf.adequate ? "ok" : "bad"}>
+                    {r.reinf.adequate ? `OK (+${fmt(r.reinf.available - r.reinf.A, 0)})` : `Deficit ${fmt(r.reinf.deficit, 0)} mm²`}
+                  </td>
+                  <td>{r.srn ? <b className="ok">SRN</b> : <span className="bad">pad</span>}</td>
+                  <td className="num">{fmt(r.weight, 1)} kg</td>
+                  <td>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => setManways((m) => m.filter((x) => x.id !== r.mw.id))}
+                      title="Remove manway"
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {manwayResults.length === 0 && (
+                <tr><td colSpan={14} className="dim">No manways — press “+ manway”.</td></tr>
               )}
             </tbody>
           </table>
@@ -572,6 +789,10 @@ export default function DatasheetPage() {
 
   function update(i: number, patch: Partial<NozzleInput>) {
     setNozzles((n) => n.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  }
+
+  function updateManway(i: number, patch: Partial<ManwayRow>) {
+    setManways((m) => m.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   }
 }
 

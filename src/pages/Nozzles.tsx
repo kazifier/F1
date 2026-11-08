@@ -148,6 +148,7 @@ export default function NozzlesPage() {
         <Kpi k="Marks" v={`${sum.marks}`} n={`${marks.length} lines on the datasheet schedule`} />
         <Kpi k="Joints" v={`${sum.joints}`} n="openings + manways" />
         <Kpi k="Self-reinforced" v={`${sum.srn}`} n="no RF pad required (UG-37)" />
+        <Kpi k="SRN weight" v={`${sum.srnWeight.toFixed(0)} kg`} n={`${sum.weight.toFixed(0)} kg for all joints`} />
         <Kpi k="RF pads" v={`${sum.pads}`} n="pads to fabricate" />
         <Kpi k="Studs" v={`${sum.studs}`} n="A193 B7, spares excluded" />
       </div>
@@ -169,6 +170,7 @@ export default function NozzlesPage() {
                 <th>RF pad</th>
                 <th>Gasket</th>
                 <th>Fasteners</th>
+                <th className="num">Weight</th>
               </tr>
             </thead>
             <tbody>
@@ -183,12 +185,13 @@ export default function NozzlesPage() {
                   </td>
                   <td>
                     <b>{j.flange.type}</b> · {j.flange.size} · {j.flange.rating}
+                    <div className="est-sub">thk {j.flange.thk} mm · {j.flange.mass.toFixed(1)} kg</div>
                     <div className="est-sub">{j.flange.material}</div>
                     <div className="est-sub">{j.flange.facing}</div>
                   </td>
                   <td>
                     <b>
-                      {j.neck.size} · {j.neck.wall.toFixed(1)} mm
+                      Ø{j.neck.od.toFixed(1)} × {j.neck.wall.toFixed(1)} mm
                     </b>
                     <div className="est-sub">
                       {j.neck.plateNeck ? "rolled plate neck" : `Sch ${j.neck.schedule}`} · {j.neck.length} lg
@@ -229,11 +232,15 @@ export default function NozzlesPage() {
                     </div>
                     <div className="est-sub">{j.fasteners.total} per set of {j.qty}</div>
                   </td>
+                  <td className="num">
+                    <b>{j.weight.toFixed(1)}</b>
+                    <div className="est-sub">× {j.qty} = {(j.weight * j.qty).toFixed(1)} kg</div>
+                  </td>
                 </tr>
               ))}
               {joints.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="est-sub" style={{ padding: 8 }}>
+                  <td colSpan={10} className="est-sub" style={{ padding: 8 }}>
                   {eq.he
                       ? "No nozzle marks on this exchanger — add them from the exchanger wizard, or reset to the TEMA RG-6.4 schedule."
                       : `${marks.length} schedule lines but no dimensioned openings — check the datasheet schedule.`}

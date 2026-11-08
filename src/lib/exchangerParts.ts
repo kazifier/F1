@@ -13,6 +13,7 @@
 
 import type { BomItem, ItemCategory } from "./bom";
 import { JOINT_LABEL } from "./exchangerClass";
+import { NECK_PIPE, nozzleJoints } from "./nozzleDetail";
 import { materialByName } from "./catalog";
 import {
   defaultExchangerNozzles,
@@ -603,6 +604,50 @@ export function buildExchangerBom(eq: Equipment, rates: RateBook): BomItem[] {
       rate,
       amount: c.weight * rate,
     });
+  }
+
+  // SRN marks are their own BOQ item: the self-reinforced neck carries the
+  // opening, so procurement gets one line with dimensions and mass per mark
+  // rather than a lump sum inside the "Nozzles" component.
+  const shells = eq.he.shells;
+  const srn = nozzleJoints(eq).filter((j) => j.type === "SRN");
+  if (srn.length > 0) {
+    const rate = rates.materialRate[NECK_PIPE] ?? materialByName(NECK_PIPE).rate;
+    let srnKg = 0;
+    let srnQty = 0;
+    for (const j of srn) {
+      const qty = j.qty * shells;
+      const weight = j.weight * qty;
+      srnKg += weight;
+      srnQty += qty;
+      items.push({
+        uid: `${eq.id}-SRN-${j.mark}`,
+        equipmentId: eq.id,
+        equipmentTag: eq.tag,
+        equipmentName: eq.name,
+        partKey: "nozzle",
+        partLabel: "SRN nozzle",
+        itemCode: `${eq.tag}/SRN-${j.mark}`,
+        category: "Pipe",
+        description: `SRN nozzle ${j.mark} ${j.size} ${j.flange.rating} — self-reinforced neck, no RF pad`,
+        material: NECK_PIPE,
+        qty,
+        unit: "no",
+        spec: `${j.flange.type} ${j.flange.size} ${j.flange.rating} · neck Ø${j.neck.od.toFixed(1)} × ${j.neck.wall.toFixed(1)} mm × ${j.neck.length} lg · flange ${j.flange.thk} thk · ${j.weight.toFixed(1)} kg/joint`,
+        weight,
+        thickness: j.neck.wall,
+        weldLength: Math.PI * mmToM(j.neck.od) * 2 * qty,
+        rate,
+        amount: weight * rate,
+      });
+    }
+    const agg = items.find((i) => i.partKey === "Nozzles");
+    if (agg) {
+      agg.qty = Math.max(0, agg.qty - srnQty);
+      agg.weight = Math.max(0, agg.weight - srnKg);
+      agg.amount = agg.weight * agg.rate;
+      agg.description = `${agg.description} — ${srnQty} SRN mark${srnQty === 1 ? "" : "s"} listed separately`;
+    }
   }
   return items;
 }

@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { areaReinforcement, shellCircumferential } from "./asme";
-import { allowableStress, materialByName, pipeOd, pipeWall, studSpec } from "./catalog";
+import { allowableStress, flangeMass, flangeThk, materialByName, pipeOd, pipeWall, studSpec } from "./catalog";
 import { defaultExchangerNozzles, designExchanger, flangeClassFor } from "./tema";
 import { isBodyFlange, isManway, parseNozzles, type ProjectUnit } from "../data/units";
 import type { Equipment, PartRow } from "./types";
@@ -166,9 +166,21 @@ export interface NozzleJoint {
   kind: JointKind;
   /** Standard = separate RF pad; SRN = self-reinforced neck, no pad */
   type: "Standard" | "SRN";
-  flange: { type: FlangeType; size: string; rating: string; material: string; facing: string };
+  flange: {
+    type: FlangeType;
+    size: string;
+    rating: string;
+    material: string;
+    facing: string;
+    /** B16.5 flange thickness, mm */
+    thk: number;
+    /** flange mass, kg */
+    mass: number;
+  };
   neck: {
     size: string;
+    /** neck outside diameter, mm */
+    od: number;
     length: number;
     schedule: string;
     material: string;
@@ -176,6 +188,8 @@ export interface NozzleJoint {
     required: number;
     plateNeck: boolean;
   };
+  /** neck + flange + pad mass for one joint, kg (studs and gasket excluded) */
+  weight: number;
   pad: PadResult;
   gasket: { type: string; thk: number; size: string; rating: string; material: string };
   fasteners: { perJoint: number; dia: string; length: number; total: number; stud: string; nut: string; thread: string };
@@ -258,6 +272,12 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
     const gskThk = manwayLike ? 6 : 4.5;
     const stud = studSpec(size, ratingKey, gskThk);
     const mat = ftype === "BLRF" ? (str(eq.parts.manway?.[0], "mw_mat") || FLANGE_FORGING) : FLANGE_FORGING;
+    const density = materialByName(NECK_PIPE).density || 7850;
+    const neckKg = (Math.PI * (od - wall) * wall * length) / 1e9 * density;
+    const flangeKg = flangeMass(size, ratingKey);
+    const padKg = pad.required
+      ? ((Math.PI / 4) * (Math.pow(pad.padOd, 2) - Math.pow(pad.padId, 2)) * pad.padThk) / 1e9 * density
+      : 0;
     return {
       key: `${mark}-${size}`,
       mark,
@@ -272,9 +292,12 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
         rating,
         material: mat + (lined ? " (lined facing)" : ""),
         facing: lined ? "RF + lining facing" : "RF",
+        thk: flangeThk(size, ratingKey),
+        mass: flangeKg,
       },
       neck: {
         size,
+        od,
         length,
         schedule: plateNeck ? "plate" : sch,
         material: plateNeck ? SHELL_PLATE : NECK_PIPE,
@@ -301,6 +324,7 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
         nut: NUT_MAT,
         thread: stud?.thread ?? "",
       },
+      weight: neckKg + flangeKg + padKg,
       ug37: { d, tr: base.tr, trn, fr1, shellT: base.shellT, E: base.E },
     };
   };
@@ -394,4 +418,6 @@ export const jointSummary = (rows: NozzleJoint[]) => ({
   pads: rows.filter((r) => r.pad.required).reduce((a, r) => a + r.qty, 0),
   studs: rows.reduce((a, r) => a + r.fasteners.total, 0),
   gaskets: rows.reduce((a, r) => a + r.qty, 0),
+  weight: rows.reduce((a, r) => a + r.weight * r.qty, 0),
+  srnWeight: rows.filter((r) => r.type === "SRN").reduce((a, r) => a + r.weight * r.qty, 0),
 });
