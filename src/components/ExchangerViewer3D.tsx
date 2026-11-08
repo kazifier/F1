@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { tubeLayout, type ExchangerDesign, type ExchangerSpec } from "../lib/tema";
 import { JOINT_LABEL, MECH_LABEL } from "../lib/exchangerClass";
 import type { HeNozzleRow } from "../lib/types";
@@ -80,14 +85,28 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#eef3f8");
-    scene.fog = new THREE.Fog("#eef3f8", 60, 220);
+    scene.fog = new THREE.Fog("#eef3f8", 90, 340);
 
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.05, 600);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    // photoreal output: filmic tone mapping in sRGB, soft shadows, capped DPR
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     renderer.setSize(width, height);
     renderer.localClippingEnabled = true;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(renderer.domElement);
+
+    // image-based lighting: a studio environment gives the steel something to
+    // reflect, which is what separates a photoreal render from a flat CAD shot
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    scene.environment = envRT.texture;
+    scene.environmentIntensity = 0.55;
+    pmrem.dispose();
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -96,18 +115,31 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
     controls.maxDistance = 220;
     controls.autoRotateSpeed = 1.1;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xa8b6c4, 1.35));
-    const key = new THREE.DirectionalLight(0xffffff, 2.1);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xa8b6c4, 0.45));
+    const key = new THREE.DirectionalLight(0xfff4e6, 2.5);
     key.position.set(18, 26, 20);
+    key.castShadow = true;
     scene.add(key);
-    const rim = new THREE.DirectionalLight(0x88aaff, 0.85);
+    const rim = new THREE.DirectionalLight(0xaac4ff, 0.55);
     rim.position.set(-20, 12, -16);
     scene.add(rim);
 
     const group = new THREE.Group();
     scene.add(group);
 
-    const grid = new THREE.GridHelper(240, 48, 0xc3ced9, 0xdde5ec);
+    // a real ground catches the shadow; the grid is only a drafting aid on top
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(600, 600),
+      new THREE.MeshStandardMaterial({ color: 0xe4ebf2, roughness: 0.97, metalness: 0 }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(240, 48, 0xb6c4d1, 0xd4dde6);
+    const gridMat = grid.material as THREE.Material;
+    gridMat.transparent = true;
+    gridMat.opacity = 0.45;
     grid.position.y = 0;
     scene.add(grid);
 
@@ -777,9 +809,74 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
     else if (design.orientation === "Vertical") buildVertical();
     else buildHorizontal();
 
-    // grid sits at grade, so lift it to the bottom of whatever was built
+    // ---- grade, shadows and the render pipeline ------------------------------
     const bounds = new THREE.Box3().setFromObject(group);
-    grid.position.y = bounds.min.y - 0.05;
+    const centre = bounds.getCenter(new THREE.Vector3());
+    const sceneRadius = Math.max(bounds.getSize(new THREE.Vector3()).length() / 2, 1);
+
+    group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      }
+    });
+
+    ground.position.y = bounds.min.y - 0.04;
+    grid.position.y = bounds.min.y - 0.02;
+
+    // the key light becomes the sun: shadow camera sized to this assembly
+    key.position
+      .copy(centre)
+      .add(new THREE.Vector3(0.9, 1.3, 0.8).normalize().multiplyScalar(sceneRadius * 3.2));
+    key.target.position.copy(centre);
+    key.target.updateMatrixWorld();
+    scene.add(key.target);
+    const shadowCam = key.shadow.camera;
+    shadowCam.left = -sceneRadius * 1.5;
+    shadowCam.right = sceneRadius * 1.5;
+    shadowCam.top = sceneRadius * 1.5;
+    shadowCam.bottom = -sceneRadius * 1.5;
+    shadowCam.near = 0.5;
+    shadowCam.far = sceneRadius * 12;
+    shadowCam.updateProjectionMatrix();
+    key.shadow.bias = -0.0004;
+    key.shadow.normalBias = Math.max(0.02, sceneRadius * 0.008);
+    key.shadow.mapSize.set(width > 1100 ? 2048 : 1024, width > 1100 ? 2048 : 1024);
+
+    // ---- ambient occlusion + filmic output -----------------------------------
+    // guards: AO only where it can pay for itself (WebGL2 and a large enough
+    // canvas) and only while the model is still — it resumes when the drag ends
+    const aoAllowed = renderer.capabilities.isWebGL2 && width >= 520 && height >= 300;
+    const target = renderer.capabilities.isWebGL2
+      ? new THREE.WebGLRenderTarget(width, height, { samples: 4, type: THREE.HalfFloatType })
+      : undefined;
+    const composer = new EffectComposer(renderer, target);
+    composer.addPass(new RenderPass(scene, camera));
+    let aoPass: GTAOPass | null = null;
+    if (aoAllowed) {
+      aoPass = new GTAOPass(scene, camera, width, height);
+      aoPass.updateGtaoMaterial({
+        radius: 0.4,
+        distanceExponent: 1.2,
+        thickness: 1,
+        scale: 1,
+        samples: width > 1000 ? 16 : 8,
+        distanceFallOff: 1,
+        screenSpaceRadius: false,
+      });
+      composer.addPass(aoPass);
+    }
+    composer.addPass(new OutputPass());
+
+    const pauseAo = () => {
+      if (aoPass) aoPass.enabled = false;
+    };
+    const resumeAo = () => {
+      if (aoPass) aoPass.enabled = true;
+    };
+    controls.addEventListener("start", pauseAo);
+    controls.addEventListener("end", resumeAo);
 
     let raf = 0;
     const animate = () => {
@@ -798,7 +895,7 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
       }
       for (const o of bundleRef.current) o.visible = stateRef.current.tubes;
       controls.update();
-      renderer.render(scene, camera);
+      composer.render();
       raf = requestAnimationFrame(animate);
     };
     animate();
@@ -809,6 +906,7 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      composer.setSize(w, h);
     };
     const ro = new ResizeObserver(onResize);
     ro.observe(mount);
@@ -816,7 +914,12 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      controls.removeEventListener("start", pauseAo);
+      controls.removeEventListener("end", resumeAo);
       controls.dispose();
+      aoPass?.dispose();
+      composer.dispose();
+      envRT.dispose();
       scene.traverse((o) => {
         const m = o as THREE.Mesh & THREE.LineSegments & THREE.Line;
         if (m.isMesh || m.isLineSegments || m.isLine) {
