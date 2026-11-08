@@ -18,6 +18,8 @@ export interface ExchangerViewerProps {
   spec: ExchangerSpec;
   design: ExchangerDesign;
   nozzles: HeNozzleRow[];
+  /** SRN forging geometry by nozzle mark: shell surface → RF face, flange OD/thk (mm) */
+  srnByMark?: Record<string, { height: number; flangeOd: number; flangeThk: number }>;
 }
 
 const npsOd = (nps: string) => {
@@ -37,7 +39,7 @@ function anchorFor(service: string, i: number): { x: number; angle: number } {
   return { x: -0.1 + ((i * 0.17) % 1), angle: i % 2 === 0 ? 90 : 270 };
 }
 
-export default function ExchangerViewer3D({ tag, spec, design, nozzles }: ExchangerViewerProps) {
+export default function ExchangerViewer3D({ tag, spec, design, nozzles, srnByMark }: ExchangerViewerProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const [spin, setSpin] = useState(true);
   const [wireframe, setWireframe] = useState(false);
@@ -74,6 +76,9 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
     design.heater?.coilTubes ?? 0,
     design.heater?.stackDia ?? 0,
     design.heater?.stackHeight ?? 0,
+    Object.entries(srnByMark ?? {})
+      .map(([m, g]) => `${m}:${g.height.toFixed(0)}:${g.flangeOd.toFixed(0)}`)
+      .join(","),
   ].join("|");
 
   useEffect(() => {
@@ -255,21 +260,34 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
     };
 
     /** nozzle with neck + flange along an arbitrary direction */
-    const nozzle = (pos: THREE.Vector3, dir: THREE.Vector3, nr: number, nlen = 0.28) => {
+    const nozzle = (
+      pos: THREE.Vector3,
+      dir: THREE.Vector3,
+      nr: number,
+      nlen = 0.28,
+      srn?: { height: number; flangeOd: number; flangeThk: number },
+    ) => {
       const up = new THREE.Vector3(0, 1, 0);
       const q = new THREE.Quaternion().setFromUnitVectors(up, dir.clone().normalize());
-      const neck = new THREE.Mesh(new THREE.CylinderGeometry(nr, nr, nlen, 20, 1, true), nozzleMat);
-      neck.position.copy(pos).addScaledVector(dir, nlen / 2);
+      // SRN: one forging to the RF face — no pipe neck, no pad
+      const flangeR = srn ? (srn.flangeOd / 2) * S : nr * 1.75;
+      const flangeT = srn ? Math.max(srn.flangeThk * S, 0.008) : 0.035;
+      const height = srn ? Math.max(srn.height * S, flangeT + 0.01) : nlen + flangeT / 2;
+      const neckLen = Math.max(height - flangeT, 0.01);
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(nr, nr, neckLen, 20, 1, true), nozzleMat);
+      neck.position.copy(pos).addScaledVector(dir, neckLen / 2);
       neck.quaternion.copy(q);
       group.add(neck);
-      const fl = new THREE.Mesh(new THREE.CylinderGeometry(nr * 1.75, nr * 1.75, 0.035, 24), flangeMat);
-      fl.position.copy(pos).addScaledVector(dir, nlen);
+      const fl = new THREE.Mesh(new THREE.CylinderGeometry(flangeR, flangeR, flangeT, 24), flangeMat);
+      fl.position.copy(pos).addScaledVector(dir, neckLen + flangeT / 2);
       fl.quaternion.copy(q);
       group.add(fl);
-      const pad = new THREE.Mesh(new THREE.TorusGeometry(nr * 1.35, 0.01, 8, 20), flangeMat);
-      pad.position.copy(pos);
-      pad.quaternion.copy(q).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)));
-      group.add(pad);
+      if (!srn) {
+        const pad = new THREE.Mesh(new THREE.TorusGeometry(nr * 1.35, 0.01, 8, 20), flangeMat);
+        pad.position.copy(pos);
+        pad.quaternion.copy(q).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)));
+        group.add(pad);
+      }
     };
 
     /** circular tube bundle from the TEMA layout — axis X or Y */
@@ -441,7 +459,7 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
         const baseR = inChannel ? R + t : Ro;
         const x = inChannel ? (a.x > 0 ? chX : -L / 2 + tsT / 2) : a.x * L;
         const dir = new THREE.Vector3(0, Math.cos(theta), Math.sin(theta));
-        nozzle(new THREE.Vector3(x, dir.y * baseR, dir.z * baseR), dir, nr, 0.26 + nr);
+        nozzle(new THREE.Vector3(x, dir.y * baseR, dir.z * baseR), dir, nr, 0.26 + nr, srnByMark?.[nz.mark]);
       });
 
       saddles(Ro, L);
@@ -495,7 +513,7 @@ export default function ExchangerViewer3D({ tag, spec, design, nozzles }: Exchan
       shellNozzles.forEach((nz, i) => {
         const nr = Math.max((npsOd(nz.nps) / 2) * S, 0.03);
         const y = -L * 0.3 + (i * L) / 4.5;
-        nozzle(new THREE.Vector3(0, y, Ro), new THREE.Vector3(0, 0, 1), nr, 0.3 + nr);
+        nozzle(new THREE.Vector3(0, y, Ro), new THREE.Vector3(0, 0, 1), nr, 0.3 + nr, srnByMark?.[nz.mark]);
       });
 
       // ladder from grade to the top platform

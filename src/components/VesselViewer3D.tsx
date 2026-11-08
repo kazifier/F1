@@ -11,6 +11,8 @@ export interface NozzleSpec {
   /** degrees around the vessel */
   angle: number;
   projection: number;
+  /** one-piece SRN forging: shell/head outer surface → RF face, mm */
+  srn?: { height: number; flangeOd: number; flangeThk: number };
 }
 
 export interface ViewerProps {
@@ -171,37 +173,60 @@ export default function VesselViewer3D(props: ViewerProps) {
 
     // --- nozzles -----------------------------------------------------------
     for (const nz of props.nozzles) {
-      const nr = (nz.od / 2) * SCALE;
-      const nlen = (nz.projection || 150) * SCALE;
-      const geoSide = new THREE.CylinderGeometry(nr, nr, nlen, 20, 1, true);
-      const nozz = new THREE.Mesh(geoSide, nozzleMat);
       const theta = (nz.angle * Math.PI) / 180;
       const yPos = -L / 2 + nz.position * L;
-      nozz.position.set(Math.cos(theta) * (Ro + nlen / 2), yPos, Math.sin(theta) * (Ro + nlen / 2));
-      nozz.rotation.z = -Math.PI / 2;
-      nozz.rotation.y = -theta;
-      group.add(nozz);
+      const dir = new THREE.Vector3(Math.cos(theta), 0, Math.sin(theta));
+      const nr = (nz.od / 2) * SCALE;
+      const place = (mesh: THREE.Mesh, dist: number) => {
+        mesh.position.set(dir.x * dist, yPos, dir.z * dist);
+        mesh.rotation.z = -Math.PI / 2;
+        mesh.rotation.y = -theta;
+        group.add(mesh);
+      };
 
-      // flange
-      const fg = new THREE.Mesh(
-        new THREE.CylinderGeometry(nr * 1.75, nr * 1.75, 0.028, 24),
-        flangeMat,
-      );
-      fg.position.set(
-        Math.cos(theta) * (Ro + nlen + 0.014),
-        yPos,
-        Math.sin(theta) * (Ro + nlen + 0.014),
-      );
-      fg.rotation.z = -Math.PI / 2;
-      fg.rotation.y = -theta;
-      group.add(fg);
+      const srn = nz.srn;
+      // SRN is one forged piece: no pipe neck and no reinforcement pad, a raised
+      // hub at the shell, and the flange seated at the measured height to RF.
+      const flangeR = srn ? (srn.flangeOd / 2) * SCALE : nr * 1.75;
+      const flangeT = srn ? Math.max(srn.flangeThk * SCALE, 0.008) : 0.028;
+      const height = srn ? Math.max(srn.height * SCALE, flangeT + 0.01) : (nz.projection || 150) * SCALE + flangeT;
+      const neckLen = Math.max(height - flangeT, 0.01);
 
-      // reinforcement pad
-      const pad = new THREE.Mesh(new THREE.TorusGeometry(nr * 1.9, 0.012, 8, 28), flangeMat);
-      pad.position.set(Math.cos(theta) * Ro, yPos, Math.sin(theta) * Ro);
-      pad.rotation.y = -theta + Math.PI / 2;
-      pad.rotation.x = Math.PI / 2;
-      group.add(pad);
+      if (srn) {
+        const hubLen = Math.min(neckLen * 0.5, Math.max(nr * 1.4, 0.02));
+        const hub = new THREE.Mesh(
+          new THREE.CylinderGeometry(nr, Math.max(nr * 1.6, flangeR * 0.45), hubLen, 28, 1, false),
+          nozzleMat,
+        );
+        place(hub, Ro + hubLen / 2);
+        const neckLenRest = Math.max(neckLen - hubLen, 0.005);
+        const neck = new THREE.Mesh(
+          new THREE.CylinderGeometry(nr, nr, neckLenRest, 24, 1, true),
+          nozzleMat,
+        );
+        place(neck, Ro + hubLen + neckLenRest / 2);
+        // weld collar where the forging lands on the shell / dished end
+        const collar = new THREE.Mesh(new THREE.TorusGeometry(nr * 1.62, 0.006, 8, 30), flangeMat);
+        collar.position.set(dir.x * Ro, yPos, dir.z * Ro);
+        collar.rotation.y = -theta + Math.PI / 2;
+        collar.rotation.x = Math.PI / 2;
+        group.add(collar);
+      } else {
+        const neck = new THREE.Mesh(new THREE.CylinderGeometry(nr, nr, neckLen, 20, 1, true), nozzleMat);
+        place(neck, Ro + neckLen / 2);
+      }
+
+      // flange — the raised face sits at the forging height
+      const fg = new THREE.Mesh(new THREE.CylinderGeometry(flangeR, flangeR, flangeT, 28), flangeMat);
+      place(fg, Ro + height - flangeT / 2);
+
+      if (!srn) {
+        const pad = new THREE.Mesh(new THREE.TorusGeometry(nr * 1.9, 0.012, 8, 28), flangeMat);
+        pad.position.set(dir.x * Ro, yPos, dir.z * Ro);
+        pad.rotation.y = -theta + Math.PI / 2;
+        pad.rotation.x = Math.PI / 2;
+        group.add(pad);
+      }
     }
 
     // --- supports ----------------------------------------------------------

@@ -12,6 +12,7 @@ import {
   MECH_ORDER,
   mechCounts,
 } from "../lib/exchangerClass";
+import { nozzleJoints } from "../lib/nozzleDetail";
 import VesselViewer3D, { type NozzleSpec } from "../components/VesselViewer3D";
 import ExchangerViewer3D from "../components/ExchangerViewer3D";
 
@@ -28,6 +29,19 @@ function ExchangerDesignPanel({
   const spec = eq.he!;
   const d = designExchanger(spec);
   const nozzles = eq.heNozzles ?? defaultExchangerNozzles(spec, d);
+  // SRN marks show as a single forging in the 3D model
+  const srnByMark = useMemo(() => {
+    const out: Record<string, { height: number; flangeOd: number; flangeThk: number }> = {};
+    for (const j of nozzleJoints(eq)) {
+      if (j.type !== "SRN") continue;
+      out[j.mark] = {
+        height: j.forging.height,
+        flangeOd: j.forging.flangeOd,
+        flangeThk: j.forging.flangeThk,
+      };
+    }
+    return out;
+  }, [eq]);
   const components = exchangerComponents(eq, d);
   const heater = d.heater;
   // the whole exchanger scope, classified and sized from the same code paths
@@ -197,7 +211,7 @@ function ExchangerDesignPanel({
           </span>
         </div>
         <div className="card-body tight" style={{ height: 520 }}>
-          <ExchangerViewer3D tag={eq.tag} name={eq.name} spec={spec} design={d} nozzles={nozzles} />
+          <ExchangerViewer3D tag={eq.tag} name={eq.name} spec={spec} design={d} nozzles={nozzles} srnByMark={srnByMark} />
         </div>
         <div className="est-note">
           Drag to orbit, scroll to zoom.{" "}
@@ -341,10 +355,21 @@ export default function DesignPage() {
     const support = eq.parts.support?.[0] ?? {};
     const skirtHeight = support.su_skirt === "Yes" ? Number(support.su_skirtH) || 0 : 0;
     const saddles = support.su_saddle === "Yes" ? Number(support.su_saddleQty) || 2 : 0;
+    // joint types drive the 3D geometry: an SRN shows as one forging
+    const joints = nozzleJoints(eq).filter((j) => j.kind === "Nozzle");
     const nozzles: NozzleSpec[] = (eq.parts.nozzle ?? [])
       .filter((r) => r.nz_size)
       .map((r, i, arr) => {
         const nps = r.nz_size;
+        const joint = joints[i];
+        const srn =
+          joint && joint.size === nps && joint.type === "SRN"
+            ? {
+                height: joint.forging.height,
+                flangeOd: joint.forging.flangeOd,
+                flangeThk: joint.forging.flangeThk,
+              }
+            : undefined;
         return {
           nps,
           od: pipeOd(nps) || 100,
@@ -352,6 +377,7 @@ export default function DesignPage() {
           position: 0.18 + (0.62 * i) / Math.max(1, arr.length - 1 || 1),
           angle: (i * 360) / Math.max(2, arr.length),
           projection: Number(r.nz_length) || 150,
+          srn,
         };
       });
 
@@ -616,8 +642,11 @@ export default function DesignPage() {
         <div className="card-head">
           <h3>3D view</h3>
           <span className="hint">
-            Ø{fmt(model.insideDiameter, 0)} ID × {fmt(model.shellLength, 0)} T/T · {model.nozzles.length} nozzles ·{" "}
-            {model.skirtHeight > 0 ? "skirt" : model.saddles > 0 ? `${model.saddles} saddle` : "no support"}
+            Ø{fmt(model.insideDiameter, 0)} ID × {fmt(model.shellLength, 0)} T/T · {model.nozzles.length} nozzles
+            {model.nozzles.some((n) => n.srn)
+              ? ` (${model.nozzles.filter((n) => n.srn).length} SRN forged)`
+              : ""}{" "}
+            · {model.skirtHeight > 0 ? "skirt" : model.saddles > 0 ? `${model.saddles} saddle` : "no support"}
           </span>
         </div>
         <div className="card-body tight" style={{ height: 520 }}>
