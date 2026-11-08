@@ -146,6 +146,10 @@ export default function BoqPage() {
                   Unit: l.unit,
                   Dimensions: l.spec ?? "",
                   "Weight (kg)": l.weight.toFixed(1),
+                  "Net weight (kg)": (l.weight - (l.wastageKg ?? 0)).toFixed(1),
+                  "Wastage (kg)": (l.wastageKg ?? 0).toFixed(1),
+                  "Wastage %": l.wastagePct ? Math.round(l.wastagePct * 100) : "",
+                  "Stock length (m)": l.purchasedLength ?? "",
                   "Plates req.": l.platesRequired ?? "",
                   "Plate utilisation %": l.utilisation ? Math.round(l.utilisation * 100) : "",
                   [`Rate (${cur.code}/kg)`]: +(l.rate * cur.perBhd).toFixed(3),
@@ -390,6 +394,62 @@ export default function BoqPage() {
               </tr>
             </tfoot>
           </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Material wastage — plates &amp; pipes</h3>
+          <span className="hint">
+            {fmtInt(boq.wastage.totalLossKg)} kg lost · {money(boq.wastage.totalCost)} at material rates
+          </span>
+        </div>
+        <div className="card-body tight scroll-x">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Category</th><th>Material</th><th>Basis</th>
+                <th className="num">Net kg</th><th className="num">Purchased kg</th>
+                <th className="num">Wastage kg</th><th className="num">Wastage %</th><th className="num">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {boq.wastage.rows.map((r) => (
+                <tr key={`${r.category}-${r.material}-${r.detail}`}>
+                  <td><span className="pill">{r.category}</span></td>
+                  <td className="small">{r.material}</td>
+                  <td className="small dim">{r.detail}</td>
+                  <td className="num">{fmt(r.netKg, 1)}</td>
+                  <td className="num">{fmt(r.purchasedKg, 1)}</td>
+                  <td className="num"><b>{fmt(r.lossKg, 1)}</b></td>
+                  <td className="num">{fmt(r.lossPct * 100, 1)}%</td>
+                  <td className="num">{fmt(r.cost * cur.perBhd, cur.decimals)}</td>
+                </tr>
+              ))}
+              {boq.wastage.rows.length === 0 && (
+                <tr><td colSpan={8} className="dim" style={{ padding: 10 }}>No plate or pipe lines in this scope.</td></tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={3}>
+                  Plate {fmt(boq.wastage.plate.lossPct * 100, 1)}% · pipe/tube {fmt(boq.wastage.pipe.lossPct * 100, 1)}%
+                </td>
+                <td className="num">{fmt(boq.wastage.plate.netKg + boq.wastage.pipe.netKg, 1)}</td>
+                <td className="num">{fmt(boq.wastage.plate.purchasedKg + boq.wastage.pipe.purchasedKg, 1)}</td>
+                <td className="num">{fmt(boq.wastage.totalLossKg, 1)}</td>
+                <td />
+                <td className="num">{fmt(boq.wastage.totalCost * cur.perBhd, cur.decimals)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div className="est-note">
+          Plates are compared as purchased nested plate against the net cut area at{" "}
+          {Math.round(rates.plateUtilisation * 100)}% assumed yield on {rates.plateWidth}×{rates.plateLength} plates.
+          Pipes and tubes are bought in 6 m random lengths with a 3% cut / end-trim allowance, taken from the net
+          cut length of each line. Wastage is valued at the material rate and is already inside the purchased weight
+          above — it is not added again.
         </div>
       </div>
 

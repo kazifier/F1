@@ -3,7 +3,7 @@ import { useStore, fmt } from "../lib/store";
 import { runDesign, nozzleNeckUG45, areaReinforcement } from "../lib/asme";
 import {
   MATERIALS, HEAD_TYPES, NPS_LIST, SCHEDULE_LIST, materialByName, allowableStress,
-  pipeOd, pipeWall, flangeMass, flangeThk,
+  pipeOd, pipeWall, flangeMass, flangeThk, flangeOd,
 } from "../lib/catalog";
 import type { NozzleInput } from "../lib/types";
 import { defaultExchangerNozzles, designExchanger } from "../lib/tema";
@@ -278,13 +278,28 @@ export default function DatasheetPage() {
       legPad: 0,
     });
     const srn = bare.adequate;
-    const neckKg = pipeMass(od, provided, nz.projection || 150, "SA-106 Gr.B");
+    const pipeNeckKg = pipeMass(od, provided, nz.projection || 150, "SA-106 Gr.B");
+    const fThk = flangeThk(nz.nps, "150");
     const flangeKg = flangeMass(nz.nps, "150");
     const padKg =
       nz.repad === "Yes" && nz.padOd > 0 && nz.padThickness > 0
         ? plateMass((Math.PI / 4) * (Math.pow(nz.padOd / 1000, 2) - Math.pow(od / 1000, 2)), nz.padThickness, "SA-516 Gr.70")
         : 0;
-    return { nz, od, schWall, provided, ug45, reinf, innerD, bare, srn, weight: neckKg + flangeKg + padKg };
+    // SRN: one forging from the shell/head outside surface to the RF face —
+    // height = projection + flange thickness, neck at the governing UG-45 wall
+    const height = (nz.projection || 150) + fThk;
+    const neckThk = Math.max(ug45.tUG45, provided);
+    const forgedNeckKg = pipeMass(od, neckThk, Math.max(height - fThk, 0), "SA-106 Gr.B");
+    const flangeOuter =
+      flangeOd(nz.nps, "150") ||
+      (flangeKg > 0 && fThk > 0
+        ? Math.sqrt((4 * flangeKg) / (Math.PI * 7850 * (fThk / 1000)) + Math.pow(Math.max(od - 2 * provided, 1) / 1000, 2)) * 1000
+        : od + 60);
+    return {
+      nz, od, schWall, provided, ug45, reinf, innerD, bare, srn,
+      height, neckThk, flangeOd: flangeOuter, fThk,
+      weight: srn ? flangeKg + forgedNeckKg * 1.08 : pipeNeckKg + flangeKg + padKg,
+    };
   });
 
   // every manway is checked on the same basis as a nozzle, with a blind cover
@@ -379,7 +394,9 @@ export default function DatasheetPage() {
                     "A required": r.reinf.A.toFixed(0),
                     "A available": r.reinf.available.toFixed(0),
                     "UG-37": r.reinf.adequate ? "OK" : "REINFORCE",
-                    "SRN": r.srn ? "Yes — self-reinforced" : "No — pad required",
+                    "SRN": r.srn ? "Yes — one-piece forging" : "No — pad required",
+                    "H to RF (mm)": r.srn ? r.height.toFixed(0) : "",
+                    "Flange OD x thk": `${r.flangeOd.toFixed(0)} x ${r.fThk.toFixed(1)}`,
                     "Weight (kg)": r.weight.toFixed(1),
                   })),
                   ...manwayResults.map((r) => ({
@@ -562,7 +579,7 @@ export default function DatasheetPage() {
           <h3>Nozzle schedule — UG-45 &amp; UG-37</h3>
           <div className="row">
             <span className="hint">
-              {srnNozzles.length} of {results.length} nozzles self-reinforced · SRN {fmt(srnWeight, 0)} kg
+              {srnNozzles.length} of {results.length} nozzles are one-piece forgings (SRN) · {fmt(srnWeight, 0)} kg
             </span>
             <button className="btn btn-sm" onClick={() => setNozzles((n) => [...n, blankNozzle(n.length + 1)])}>
               + nozzle
@@ -576,6 +593,7 @@ export default function DatasheetPage() {
                 <th>Mark</th><th>Size</th><th>Sch</th><th>Type</th><th className="num">OD</th>
                 <th className="num">Sch wall</th><th className="num">Neck as-supplied</th>
                 <th>RF Pad</th><th className="num">Pad thk</th><th className="num">Pad OD</th>
+                <th className="num">H to RF</th><th className="num">Flange Ø×thk</th>
                 <th className="num">t UG-45</th><th>UG-45</th>
                 <th className="num">A req</th><th className="num">A avail</th><th>UG-37</th>
                 <th>SRN</th><th className="num">Weight</th><th />
@@ -598,12 +616,16 @@ export default function DatasheetPage() {
                     </select>
                   </td>
                   <td>
-                    <select value={r.nz.type} onChange={(e) => update(i, { type: e.target.value })}>
-                      <option>Pipe</option>
-                      <option>Forged</option>
-                      <option>Rolled Plate Pipe</option>
-                      <option>Coupling</option>
-                    </select>
+                    {r.srn ? (
+                      <b className="small">Forged</b>
+                    ) : (
+                      <select value={r.nz.type} onChange={(e) => update(i, { type: e.target.value })}>
+                        <option>Pipe</option>
+                        <option>Forged</option>
+                        <option>Rolled Plate Pipe</option>
+                        <option>Coupling</option>
+                      </select>
+                    )}
                   </td>
                   <td className="num">{fmt(r.od, 1)}</td>
                   <td className="num">{fmt(r.schWall, 2)}</td>
@@ -631,6 +653,8 @@ export default function DatasheetPage() {
                   <td>
                     <input type="number" style={{ width: 70, textAlign: "right" }} value={r.nz.padOd} onChange={(e) => update(i, { padOd: Number(e.target.value) })} />
                   </td>
+                  <td className="num">{r.srn ? fmt(r.height, 0) : "-"}</td>
+                  <td className="num">{fmt(r.flangeOd, 0)} × {fmt(r.fThk, 1)}</td>
                   <td className="num"><b>{fmt(r.ug45.tUG45, 2)}</b></td>
                   <td className={r.provided >= r.ug45.tUG45 ? "ok" : "bad"}>
                     {r.provided >= r.ug45.tUG45 ? `OK (+${fmt(r.provided - r.ug45.tUG45, 2)})` : `Thin ${fmt(r.ug45.tUG45 - r.provided, 2)}`}
@@ -642,7 +666,7 @@ export default function DatasheetPage() {
                       ? `OK (+${fmt(r.reinf.available - r.reinf.A, 0)})`
                       : `Deficit ${fmt(r.reinf.deficit, 0)} mm²`}
                   </td>
-                  <td>{r.srn ? <b className="ok">SRN</b> : <span className="bad">pad</span>}</td>
+                  <td>{r.srn ? <b className="ok">SRN · forged</b> : <span className="bad">pad</span>}</td>
                   <td className="num">{fmt(r.weight, 1)} kg</td>
                   <td>
                     <button
@@ -656,7 +680,7 @@ export default function DatasheetPage() {
                 </tr>
               ))}
               {results.length === 0 && (
-                <tr><td colSpan={18} className="dim">No nozzles — press “+ nozzle”.</td></tr>
+                <tr><td colSpan={20} className="dim">No nozzles — press “+ nozzle”.</td></tr>
               )}
             </tbody>
           </table>

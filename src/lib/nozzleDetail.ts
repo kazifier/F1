@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { areaReinforcement, shellCircumferential } from "./asme";
-import { allowableStress, flangeMass, flangeThk, materialByName, pipeOd, pipeWall, studSpec } from "./catalog";
+import { allowableStress, flangeMass, flangeOd, flangeThk, materialByName, pipeOd, pipeWall, studSpec } from "./catalog";
 import { defaultExchangerNozzles, designExchanger, flangeClassFor } from "./tema";
 import { isBodyFlange, isManway, parseNozzles, type ProjectUnit } from "../data/units";
 import type { Equipment, PartRow } from "./types";
@@ -190,6 +190,26 @@ export interface NozzleJoint {
   };
   /** neck + flange + pad mass for one joint, kg (studs and gasket excluded) */
   weight: number;
+  /**
+   * One-piece forged geometry. An SRN is a single forging from the shell/head
+   * outer surface to the raised face — there is no pipe neck and no RF pad, so
+   * the bought item is sized by its height to the RF face, not by a pipe length.
+   */
+  forging: {
+    onePiece: boolean;
+    /** shell / dished end outside surface → RF face, mm */
+    height: number;
+    /** forging neck outside diameter, mm */
+    neckOd: number;
+    /** forging neck wall, mm (UG-45 + UG-37 governing thickness) */
+    neckThk: number;
+    /** flange outside diameter derived from the B16.5 mass, mm */
+    flangeOd: number;
+    flangeThk: number;
+    /** one-piece forging mass, kg */
+    weight: number;
+    material: string;
+  };
   pad: PadResult;
   gasket: { type: string; thk: number; size: string; rating: string; material: string };
   fasteners: { perJoint: number; dia: string; length: number; total: number; stud: string; nut: string; thread: string };
@@ -278,6 +298,26 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
     const padKg = pad.required
       ? ((Math.PI / 4) * (Math.pow(pad.padOd, 2) - Math.pow(pad.padId, 2)) * pad.padThk) / 1e9 * density
       : 0;
+
+    // ---- one-piece forging (SRN) ------------------------------------------
+    // height is measured from the shell / dished-end outside surface to the RF
+    // face; the neck wall is the governing UG-45 / UG-37 thickness, and the
+    // flange OD is backed out of the B16.5 flange mass so the two agree.
+    const fThk = flangeThk(size, ratingKey);
+    const onePiece = !pad.required;
+    const faceHeight = length + fThk;
+    const neckThk = Math.max(trn + ca, wall);
+    const boreMm = Math.max(od - 2 * wall, 1);
+    const flangeOuter =
+      flangeOd(size, ratingKey) ||
+      (flangeKg > 0 && fThk > 0
+        ? Math.sqrt((4 * flangeKg) / (Math.PI * density * (fThk / 1000)) + Math.pow(boreMm / 1000, 2)) * 1000
+        : od + 60);
+    // hollow neck from the shell to the back of the flange, plus a hub/taper
+    // allowance for the transition into the flange
+    const forgeNeck =
+      (Math.PI * (od - neckThk) * neckThk * Math.max(faceHeight - fThk, 0)) / 1e9 * density * 1.08;
+    const forgeWeight = flangeKg + forgeNeck;
     return {
       key: `${mark}-${size}`,
       mark,
@@ -292,7 +332,7 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
         rating,
         material: mat + (lined ? " (lined facing)" : ""),
         facing: lined ? "RF + lining facing" : "RF",
-        thk: flangeThk(size, ratingKey),
+        thk: fThk,
         mass: flangeKg,
       },
       neck: {
@@ -300,7 +340,7 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
         od,
         length,
         schedule: plateNeck ? "plate" : sch,
-        material: plateNeck ? SHELL_PLATE : NECK_PIPE,
+        material: onePiece ? FLANGE_FORGING : plateNeck ? SHELL_PLATE : NECK_PIPE,
         wall,
         required: Math.max(trn + ca, plateNeck ? 8 : 0),
         plateNeck,
@@ -324,7 +364,17 @@ export function nozzleJoints(eq: Equipment, unit?: ProjectUnit, opts: JointOptio
         nut: NUT_MAT,
         thread: stud?.thread ?? "",
       },
-      weight: neckKg + flangeKg + padKg,
+      weight: onePiece ? forgeWeight : neckKg + flangeKg + padKg,
+      forging: {
+        onePiece,
+        height: faceHeight,
+        neckOd: od,
+        neckThk,
+        flangeOd: flangeOuter,
+        flangeThk: fThk,
+        weight: forgeWeight,
+        material: FLANGE_FORGING,
+      },
       ug37: { d, tr: base.tr, trn, fr1, shellT: base.shellT, E: base.E },
     };
   };

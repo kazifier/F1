@@ -64,6 +64,8 @@ export interface BomItem {
   structLength?: number; // m
   weldLength?: number; // m
   surfaceArea?: number; // m2
+  /** net cut length for pipe / tube bought in stock lengths, m */
+  netLength?: number;
   rate: number;
   amount: number;
 }
@@ -76,6 +78,7 @@ const n = (row: PartRow | undefined, key: string): number => {
 const s = (row: PartRow | undefined, key: string): string => (row?.[key] ?? "").toString().trim();
 
 const mmToM = (v: number) => v / 1000;
+const fmtKg = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} t` : `${Math.round(v)} kg`);
 
 /** blank plate area factor (flat-plate area / D^2) used for head costing */
 export function headAreaFactor(type: string): number {
@@ -285,13 +288,15 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
           const joint = jointByMark.get(`N${String(idx + 1).padStart(2, "0")}`);
           const isSrn = joint?.type === "SRN";
           if (isSrn && joint) {
+            // a self-reinforced nozzle is a single forging from the shell/head
+            // outside surface to the RF face — no pipe neck, no RF pad
             push({
-              partKey: "nozzle", partLabel: "SRN nozzle", itemCode,
-              category: "Pipe",
-              description: `SRN nozzle ${rowName} ${nps} ${rating} — self-reinforced neck, no RF pad`,
-              material: pmat, qty: 1, unit: "no",
-              spec: `${joint.flange.type} ${joint.flange.size} ${joint.flange.rating} · neck Ø${joint.neck.od.toFixed(1)} × ${joint.neck.wall.toFixed(1)} mm × ${joint.neck.length} lg · flange ${joint.flange.thk} thk · ${joint.weight.toFixed(1)} kg/joint`,
-              weight: joint.weight, thickness: joint.neck.wall,
+              partKey: "nozzle", partLabel: "SRN nozzle (forging)", itemCode,
+              category: "Fitting",
+              description: `SRN nozzle ${rowName} ${nps} ${rating} — one-piece forging, no pipe or RF pad`,
+              material: joint.forging.material, qty: 1, unit: "no",
+              spec: `forged · H ${joint.forging.height.toFixed(0)} mm to RF face · neck Ø${joint.forging.neckOd.toFixed(1)} × ${joint.forging.neckThk.toFixed(1)} mm · flange Ø${joint.forging.flangeOd.toFixed(0)} × ${joint.forging.flangeThk.toFixed(1)} thk · ${joint.forging.weight.toFixed(1)} kg/joint`,
+              weight: joint.weight, thickness: joint.forging.neckThk,
               weldLength: Math.PI * mmToM(joint.neck.od) * 2, rate: 0,
             });
           }
@@ -300,7 +305,7 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
               partKey: "nozzle", partLabel: "Nozzle neck", itemCode,
               category: "Pipe", description: `Nozzle ${rowName} ${nps} ${sch} × ${len} lg`,
               material: pmat, qty: 1, unit: "no", weight: pipeMass(od, wall, len, pmat),
-              thickness: wall, weldLength: Math.PI * mmToM(od) * 2, rate: 0,
+              thickness: wall, weldLength: Math.PI * mmToM(od) * 2, netLength: mmToM(len), rate: 0,
             });
           }
           const fm = flangeMass(nps, ratingKey);
@@ -533,7 +538,7 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
             partKey: "boot", partLabel: "Boot", itemCode,
             category: "Pipe", description: `Boot ${nps} ${s(row, "bt_sch")} × ${len}`,
             material: mat, qty: 1, unit: "no", weight: pipeMass(od, wall, len, mat),
-            thickness: wall, weldLength: Math.PI * mmToM(od) * 2, rate: 0,
+            thickness: wall, weldLength: Math.PI * mmToM(od) * 2, netLength: mmToM(len), rate: 0,
           });
           break;
         }
@@ -546,7 +551,7 @@ export function buildEquipmentBom(eq: Equipment, rates: RateBook): BomItem[] {
             partKey: "skirtOpening", partLabel: "Skirt opening", itemCode,
             category: "Pipe", description: `Skirt opening ${nps} ${s(row, "so_sch")} × 150`,
             material: s(row, "so_mat") || "SA-106 Gr.B", qty: 1, unit: "no",
-            weight: pipeMass(od, wall, 150, "SA-106 Gr.B"), thickness: wall, rate: 0,
+            weight: pipeMass(od, wall, 150, "SA-106 Gr.B"), thickness: wall, netLength: 0.15, rate: 0,
           });
           break;
         }
@@ -636,17 +641,48 @@ export interface BoqLine {
   equipmentTags: string[];
   rate: number;
   amount: number;
+  /** net cut length for pipe / tube, m */
+  netLength: number;
   /** optimisation */
   platesRequired?: number;
   platesWeight?: number;
   utilisation?: number;
+  /** purchased stock length, m (pipe) */
+  purchasedLength?: number;
+  /** material lost to nesting / stock rounding / cut allowance, kg */
+  wastageKg?: number;
+  wastagePct?: number;
 }
+
+export interface WastageGroup {
+  category: ItemCategory;
+  material: string;
+  detail: string;
+  netKg: number;
+  purchasedKg: number;
+  lossKg: number;
+  lossPct: number;
+  cost: number;
+}
+
+export interface WastageResult {
+  rows: WastageGroup[];
+  plate: { netKg: number; purchasedKg: number; lossKg: number; lossPct: number; cost: number };
+  pipe: { netKg: number; purchasedKg: number; lossKg: number; lossPct: number; cost: number };
+  totalLossKg: number;
+  totalCost: number;
+}
+
+/** pipe / tube is bought in 6 m random lengths with a 3% cut allowance */
+export const PIPE_STOCK_M = 6;
+export const PIPE_CUT_ALLOWANCE = 0.03;
 
 export interface BoqResult {
   lines: BoqLine[];
   byCategory: { category: ItemCategory; weight: number; amount: number; lines: number }[];
   byMaterial: { material: string; weight: number; amount: number }[];
   totals: { weight: number; amount: number; plates: number; plateWeight: number };
+  wastage: WastageResult;
   suggestions: { title: string; detail: string; saving: number }[];
 }
 
@@ -664,6 +700,7 @@ export function buildBoq(equipment: Equipment[], items: BomItem[], rates: RateBo
       existing.weight += it.weight;
       existing.plateArea += it.plateArea ?? 0;
       existing.weldLength += it.weldLength ?? 0;
+      existing.netLength += it.netLength ?? 0;
       existing.amount += it.amount;
       if (!existing.equipmentTags.includes(it.equipmentTag)) existing.equipmentTags.push(it.equipmentTag);
     } else {
@@ -680,6 +717,7 @@ export function buildBoq(equipment: Equipment[], items: BomItem[], rates: RateBo
         weight: it.weight,
         plateArea: it.plateArea ?? 0,
         weldLength: it.weldLength ?? 0,
+        netLength: it.netLength ?? 0,
         equipmentTags: [it.equipmentTag],
         rate: it.rate,
         amount: it.amount,
@@ -707,6 +745,72 @@ export function buildBoq(equipment: Equipment[], items: BomItem[], rates: RateBo
     line.amount = line.weight * (rates.materialRate[line.material] ?? materialByName(line.material).rate);
   }
 
+  // ---- material wastage -----------------------------------------------------
+  // plate: what was bought as nested plates against the net cut area
+  // pipe/tube: 6 m stock rounding plus a 3% cut / end-trim allowance
+  for (const line of lines) {
+    if (line.category === "Plate" && line.plateArea > 0 && line.thickness) {
+      const netKg = line.plateArea * (line.thickness / 1000) * materialByName(line.material).density;
+      const purchasedKg = line.platesWeight ?? line.weight;
+      line.wastageKg = Math.max(0, purchasedKg - netKg);
+      line.wastagePct = purchasedKg > 0 ? line.wastageKg / purchasedKg : 0;
+    } else if (line.category === "Pipe" && line.netLength > 0) {
+      const allowed = line.netLength * (1 + PIPE_CUT_ALLOWANCE);
+      const purchased = Math.ceil(allowed / PIPE_STOCK_M) * PIPE_STOCK_M;
+      line.purchasedLength = purchased;
+      line.wastageKg = line.weight * (purchased / line.netLength - 1);
+      line.wastagePct = 1 - line.netLength / purchased;
+    }
+  }
+
+  const wastageRows: WastageGroup[] = (() => {
+    const groups = new Map<string, WastageGroup>();
+    for (const line of lines) {
+      if (!line.wastageKg) continue;
+      const detail =
+        line.category === "Plate"
+          ? `${Math.round(line.thickness ?? 0)} mm plate`
+          : line.category === "Pipe"
+            ? `${PIPE_STOCK_M} m stock + ${Math.round(PIPE_CUT_ALLOWANCE * 100)}% cut`
+            : "";
+      const key = `${line.category}|${line.material}|${detail}`;
+      const netKg =
+        line.category === "Plate"
+          ? line.plateArea * ((line.thickness ?? 0) / 1000) * materialByName(line.material).density
+          : line.weight;
+      const g =
+        groups.get(key) ??
+        { category: line.category, material: line.material, detail, netKg: 0, purchasedKg: 0, lossKg: 0, lossPct: 0, cost: 0 };
+      g.netKg += netKg;
+      g.purchasedKg += netKg + line.wastageKg;
+      g.lossKg += line.wastageKg;
+      groups.set(key, g);
+    }
+    return [...groups.values()]
+      .map((g) => ({
+        ...g,
+        lossPct: g.purchasedKg > 0 ? g.lossKg / g.purchasedKg : 0,
+        cost: g.lossKg * (rates.materialRate[g.material] ?? materialByName(g.material).rate),
+      }))
+      .sort((a, b) => b.lossKg - a.lossKg);
+  })();
+
+  const sumWastage = (category: ItemCategory) => {
+    const rows = wastageRows.filter((r) => r.category === category);
+    const netKg = rows.reduce((a, r) => a + r.netKg, 0);
+    const purchasedKg = rows.reduce((a, r) => a + r.purchasedKg, 0);
+    const lossKg = rows.reduce((a, r) => a + r.lossKg, 0);
+    const cost = rows.reduce((a, r) => a + r.cost, 0);
+    return { netKg, purchasedKg, lossKg, lossPct: purchasedKg > 0 ? lossKg / purchasedKg : 0, cost };
+  };
+  const wastage: WastageResult = {
+    rows: wastageRows,
+    plate: sumWastage("Plate"),
+    pipe: sumWastage("Pipe"),
+    totalLossKg: wastageRows.reduce((a, r) => a + r.lossKg, 0),
+    totalCost: wastageRows.reduce((a, r) => a + r.cost, 0),
+  };
+
   // re-price material lines that were not plate (rates already applied)
   for (const line of lines) {
     if (line.category === "Plate") continue;
@@ -728,6 +832,21 @@ export function buildBoq(equipment: Equipment[], items: BomItem[], rates: RateBo
   }
 
   const suggestions = buildSuggestions(lines, equipment, rates);
+  if (wastage.plate.netKg > 0) {
+    const yieldPct = Math.round((1 - wastage.plate.lossPct) * 100);
+    suggestions.push({
+      title: "Plate nesting yield",
+      detail: `${fmtKg(wastage.plate.purchasedKg)} of plate is bought for ${fmtKg(wastage.plate.netKg)} of net cut plate — ${yieldPct}% yield, ${fmtKg(wastage.plate.lossKg)} of offcut. Re-nesting the ${wastage.rows.filter((r) => r.category === "Plate").length} plate groups onto a shared plate size typically recovers a quarter of this.`,
+      saving: wastage.plate.cost * 0.25,
+    });
+  }
+  if (wastage.pipe.netKg > 0) {
+    suggestions.push({
+      title: "Pipe stock lengths",
+      detail: `${fmtKg(wastage.pipe.lossKg)} of pipe and tube is lost to ${PIPE_STOCK_M} m stock rounding and cut allowance (${Math.round(wastage.pipe.lossPct * 100)}% of ${fmtKg(wastage.pipe.purchasedKg)}). Ordering exact multiples of the cut length, or taking 12 m lengths on the tube sizes, removes most of it.`,
+      saving: wastage.pipe.cost * 0.4,
+    });
+  }
 
   return {
     lines,
@@ -739,6 +858,7 @@ export function buildBoq(equipment: Equipment[], items: BomItem[], rates: RateBo
       plates: totalPlates,
       plateWeight: totalPlateWeight,
     },
+    wastage,
     suggestions,
   };
 }

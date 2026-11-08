@@ -584,6 +584,13 @@ export function buildExchangerBom(eq: Equipment, rates: RateBook): BomItem[] {
           : c.key === "Radiant casing" || c.key === "Convection casing"
             ? c.qty
             : undefined;
+    // net cut length for stock-length pipe and tube (wastage is taken off this)
+    const netLength =
+      c.key === "Tubes"
+        ? c.qty * mmToM(eq.he.tubeLength * (design.mech === "hairpin" ? 2 : 1))
+        : c.key === "Radiant coil tubes" || c.key === "Convection coil"
+          ? c.qty * mmToM(eq.he.tubeLength)
+          : undefined;
     items.push({
       uid: `${eq.id}-${c.key}`,
       equipmentId: eq.id,
@@ -598,6 +605,7 @@ export function buildExchangerBom(eq: Equipment, rates: RateBook): BomItem[] {
       qty: c.qty,
       unit: c.unit,
       weight: c.weight,
+      netLength,
       thickness: c.thickness,
       weldLength: c.weld,
       surfaceArea,
@@ -626,16 +634,16 @@ export function buildExchangerBom(eq: Equipment, rates: RateBook): BomItem[] {
         equipmentTag: eq.tag,
         equipmentName: eq.name,
         partKey: "nozzle",
-        partLabel: "SRN nozzle",
+        partLabel: "SRN nozzle (forging)",
         itemCode: `${eq.tag}/SRN-${j.mark}`,
-        category: "Pipe",
-        description: `SRN nozzle ${j.mark} ${j.size} ${j.flange.rating} — self-reinforced neck, no RF pad`,
-        material: NECK_PIPE,
+        category: "Fitting",
+        description: `SRN nozzle ${j.mark} ${j.size} ${j.flange.rating} — one-piece forging, no pipe or RF pad`,
+        material: j.forging.material,
         qty,
         unit: "no",
-        spec: `${j.flange.type} ${j.flange.size} ${j.flange.rating} · neck Ø${j.neck.od.toFixed(1)} × ${j.neck.wall.toFixed(1)} mm × ${j.neck.length} lg · flange ${j.flange.thk} thk · ${j.weight.toFixed(1)} kg/joint`,
+        spec: `forged · H ${j.forging.height.toFixed(0)} mm to RF face · neck Ø${j.forging.neckOd.toFixed(1)} × ${j.forging.neckThk.toFixed(1)} mm · flange Ø${j.forging.flangeOd.toFixed(0)} × ${j.forging.flangeThk.toFixed(1)} thk · ${j.forging.weight.toFixed(1)} kg/joint`,
         weight,
-        thickness: j.neck.wall,
+        thickness: j.forging.neckThk,
         weldLength: Math.PI * mmToM(j.neck.od) * 2 * qty,
         rate,
         amount: weight * rate,
