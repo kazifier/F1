@@ -5,6 +5,13 @@ import { runDesign, nozzleNeckUG45, areaReinforcement } from "../lib/asme";
 import { allowableStress, materialByName, pipeOd, pipeWall, yieldStress } from "../lib/catalog";
 import { defaultExchangerNozzles, designExchanger, flangeClassFor } from "../lib/tema";
 import { exchangerComponents } from "../lib/exchangerParts";
+import {
+  JOINT_LABEL,
+  MECH_LABEL,
+  MECH_NOTE,
+  MECH_ORDER,
+  mechCounts,
+} from "../lib/exchangerClass";
 import VesselViewer3D, { type NozzleSpec } from "../components/VesselViewer3D";
 import ExchangerViewer3D from "../components/ExchangerViewer3D";
 
@@ -23,6 +30,15 @@ function ExchangerDesignPanel({
   const nozzles = eq.heNozzles ?? defaultExchangerNozzles(spec, d);
   const components = exchangerComponents(eq, d);
   const heater = d.heater;
+  // the whole exchanger scope, classified and sized from the same code paths
+  const scope = useMemo(
+    () =>
+      equipment
+        .filter((e) => e.he)
+        .map((e) => ({ eq: e, d: designExchanger(e.he!) })),
+    [equipment],
+  );
+  const counts = useMemo(() => mechCounts(scope.map((r) => r.d.mech)), [scope]);
   return (
     <>
       <div className="page-head">
@@ -50,6 +66,82 @@ function ExchangerDesignPanel({
         </div>
       </div>
 
+      <div className="card">
+        <div className="card-head">
+          <h3>Scope classification — {scope.length} items</h3>
+          <span className="hint">mechanical family, orientation, tube joint and criticality</span>
+        </div>
+        <div className="card-body tight" style={{ display: "flex", flexWrap: "wrap", gap: 8, paddingBottom: 10 }}>
+          {MECH_ORDER.map((m) => (
+            <span key={m} className={`pill ${counts[m] ? (m === "fixed" ? "warn" : "") : ""}`} title={MECH_NOTE[m]}>
+              {MECH_LABEL[m]} <b>{counts[m]}</b>
+            </span>
+          ))}
+        </div>
+        <div className="card-body tight scroll-x" style={{ maxHeight: 360, overflowY: "auto" }}>
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Tag</th>
+                <th>Service</th>
+                <th>Mechanical</th>
+                <th>Orientation / support</th>
+                <th>Tube joint</th>
+                <th>Criticality</th>
+                <th className="num">Tubes</th>
+                <th className="num">Shell mm</th>
+                <th className="num">Tubesheet</th>
+                <th className="num">Surface m²</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scope.map(({ eq: item, d: sd }) => (
+                <tr
+                  key={item.id}
+                  onClick={() => setActiveId(item.id)}
+                  style={{ cursor: "pointer", background: item.id === eq.id ? "rgba(11,100,200,0.06)" : undefined }}
+                >
+                  <td>
+                    <b>{item.tag}</b>
+                  </td>
+                  <td className="small">{item.name}</td>
+                  <td className="small">
+                    {MECH_LABEL[sd.mech]}
+                    <div className="dim">
+                      {sd.tubesheetCount} tubesheet{sd.tubesheetCount === 1 ? "" : "s"}
+                    </div>
+                  </td>
+                  <td className="small">
+                    {sd.orientation}
+                    <div className="dim">{sd.support}</div>
+                  </td>
+                  <td className="small">{JOINT_LABEL[sd.tubeJoint]}</td>
+                  <td>
+                    <span
+                      className={`pill ${sd.criticality === "Critical" ? "bad" : sd.criticality === "High" ? "warn" : "ok"}`}
+                    >
+                      {sd.criticality}
+                    </span>
+                  </td>
+                  <td className="num">{sd.mech === "fired-heater" ? (sd.heater?.coilTubes ?? 0) : sd.tubesTotal}</td>
+                  <td className="num">{sd.mech === "fired-heater" ? "—" : `${sd.shellId} × ${sd.shellThk}`}</td>
+                  <td className="num">{sd.mech === "fired-heater" ? "—" : `${sd.tubesheetThk} mm`}</td>
+                  <td className="num">{fmt(sd.surfaceTotal, 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="est-note">
+          {counts.fixed} fixed tubesheet · {counts.floating} floating head · {counts["u-tube"]} U-tube ·{" "}
+          {counts.hairpin} hairpin · {counts.kettle} kettle · {counts["stabbed-in"]} stabbed-in ·{" "}
+          {counts["fired-heater"]} fired heater. No item in the 401 book has a fixed (M/N) rear head, so every
+          exchanger here has a removable bundle; the sizer still designs a fixed tubesheet if the letter changes.
+          Tubes are counted from the real TEMA RCB-4.5 layout, the shell on UG-27 and the tubesheet on TEMA
+          RCB-7.2 cross-checked with UG-34.
+        </div>
+      </div>
+
       <div className="grid g4" style={{ marginBottom: 14 }}>
         <Kpi k={d.kind === "fired-heater" ? "Coil surface" : "Effective surface"} v={`${fmt(d.surfaceTotal, 0)} m²`} n={d.kind === "fired-heater" ? `${d.heater?.coilTubes ?? 0} coil tubes` : `${d.spec.shells} shell · ${d.tubesTotal} tube elements`} />
         {d.kind === "fired-heater" ? (
@@ -67,6 +159,25 @@ function ExchangerDesignPanel({
         )}
       </div>
 
+      <div className="grid g4" style={{ marginBottom: 14 }}>
+        <Kpi k="Mechanical" v={MECH_LABEL[d.mech]} n={`${d.orientation} · ${d.support}`} />
+        <Kpi
+          k="Tube joint"
+          v={JOINT_LABEL[d.tubeJoint]}
+          n={`${d.tubesheetCount} tubesheet${d.tubesheetCount === 1 ? "" : "s"} · ${d.mech === "fired-heater" ? "coil only" : `${d.tubesTotal} tubes`}`}
+        />
+        <Kpi k="Criticality" v={d.criticality} n={d.criticality === "Standard" ? "standard TEMA fabrication" : "detail review required"} />
+        <Kpi
+          k="Sizing"
+          v={d.mech === "fired-heater" ? `Ø${d.heater?.stackDia ?? 0} mm` : `${d.shellId} mm ID`}
+          n={
+            d.mech === "fired-heater"
+              ? `coil ${(d.heater?.coilWall ?? 0).toFixed(1)} mm · ${(d.heater?.tubeLength ?? 0) / 1000} m tubes`
+              : `shell ${d.shellThk} mm · tubesheet ${d.tubesheetThk} mm`
+          }
+        />
+      </div>
+
       {heater && (
         <div className="grid g4" style={{ marginBottom: 14 }}>
           <Kpi k="Absorbed duty" v={`${fmt(heater.dutyKW, 0)} kW`} n={`${heater.flux} kW/m² average radiant flux`} />
@@ -81,8 +192,8 @@ function ExchangerDesignPanel({
           <h3>3D model — {eq.tag}</h3>
           <span className="hint">
             {d.kind === "fired-heater"
-              ? `fired heater · ${d.heater?.coilTubes ?? 0} coil tubes · Ø${d.heater?.stackDia ?? 0} mm stack`
-              : `${spec.tema} · ${d.shellId} mm ID × ${fmt(spec.tubeLength / 1000, 1)} m · ${d.tubesTotal} tubes`}
+              ? `API 560 fired heater · ${d.heater?.coilTubes ?? 0} coil tubes · Ø${d.heater?.stackDia ?? 0} mm stack`
+              : `${MECH_LABEL[d.mech]} · ${spec.tema} · ${d.shellId} mm ID × ${fmt(spec.tubeLength / 1000, 1)} m · ${d.tubesTotal} tubes`}
           </span>
         </div>
         <div className="card-body tight" style={{ height: 520 }}>
@@ -92,15 +203,25 @@ function ExchangerDesignPanel({
           Drag to orbit, scroll to zoom.{" "}
           {d.kind === "fired-heater" ? (
             <>
-              <b>Section</b> opens the casing so the coil and burners show; the stack, burners and coil are sized
-              from the API 560 heater sheet.
+              <b>Section</b> cuts the casing away so the coil and burners show; the radiant box, convection
+              section, burners and stack are sized from the API 560 heater sheet.
             </>
           ) : (
             <>
               <b>Section</b> opens the shell so the bundle, baffles and tubesheets show; the nozzle necks and
-              flanges are placed from the exchanger nozzle schedule ({nozzles.length} openings).
+              flanges are placed from the exchanger nozzle schedule ({nozzles.length} openings). The model is
+              built to the mechanical family — floating head, U-tube, hairpin, kettle or stabbed-in.
             </>
           )}
+        </div>
+        <div className="est-note">
+          <b>
+            {d.criticality} · {MECH_LABEL[d.mech]}
+          </b>{" "}
+          — {d.mechReason}
+          {d.features.length > 0 && <> Key features: {d.features.join(" · ")}.</>}{" "}
+          Mechanical detail: {d.orientation.toLowerCase()}, {d.support.toLowerCase()}; tube joint —{" "}
+          {JOINT_LABEL[d.tubeJoint]}.
         </div>
       </div>
 

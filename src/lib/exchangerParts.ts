@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import type { BomItem, ItemCategory } from "./bom";
+import { JOINT_LABEL } from "./exchangerClass";
 import { materialByName } from "./catalog";
 import {
   defaultExchangerNozzles,
@@ -91,8 +92,9 @@ export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): He
   const d = design ?? designExchanger(spec);
   if (d.kind === "fired-heater") return heaterComponents(eq, d);
   const shells = d.spec.shells;
-  const fixed = d.fixedTubesheet;
-  const bayonet = d.kind === "bayonet";
+  const fixed = d.mech === "fixed";
+  const hairpin = d.mech === "hairpin";
+  const tsCount = Math.max(1, d.tubesheetCount);
   const rating = flangeClassFor(Math.max(spec.shellPressure, spec.tubePressure), Math.max(spec.shellTemp, spec.tubeTemp));
   const D = d.shellId;
   const L = spec.tubeLength;
@@ -184,57 +186,62 @@ export function exchangerComponents(eq: Equipment, design?: ExchangerDesign): He
       key: "Tubes",
       label: "Tubes",
       unit: "no",
-      qty: d.tubesTotal * (bayonet ? 2 : 1),
+      qty: d.tubesTotal * (hairpin ? 2 : 1),
       weight: tubesW,
       weld: 0,
       category: "Pipe",
       material: spec.tubeMat,
       thickness: spec.tubeThk,
       derived: true,
-      detail: `${spec.tubeOd} OD × ${spec.tubeThk} mm × ${mmToM(bayonet ? L * 2 : L).toFixed(2)} m, ${spec.pattern}° ${spec.pitch} mm pitch, ${spec.tubePasses} pass${bayonet ? " — bayonet element, two legs per tube" : ""}`,
+      detail: `${spec.tubeOd} OD × ${spec.tubeThk} mm × ${mmToM(hairpin ? L * 2 : L).toFixed(2)} m, ${spec.pattern}° ${spec.pitch} mm pitch, ${spec.tubePasses} pass${hairpin ? " — hairpin element, two legs per tube" : ""} · ${JOINT_LABEL[d.tubeJoint]}`,
     },
     {
       key: "Stationary tubesheet",
       label: "Stationary tubesheet",
       unit: "no",
       qty: shells,
-      weight: tsW / 2,
+      weight: tsW / tsCount,
       weld: shells * 1.5,
       category: "Plate",
       material: spec.tubesheetMat,
       thickness: d.tubesheetThk,
       derived: true,
-      detail: `${d.tubesheetThk} mm — TEMA RCB-7.2 ${d.tubesheetTema.toFixed(1)} / UG-34 ${d.tubesheetUg34.toFixed(1)} mm`,
+      detail: `${d.tubesheetThk} mm — TEMA RCB-7.2 ${d.tubesheetTema.toFixed(1)} / UG-34 ${d.tubesheetUg34.toFixed(1)} mm, ${d.tubesheetCount} sheet${d.tubesheetCount === 1 ? "" : "s"} per shell`,
     },
     {
       key: "Floating tubesheet",
       label: "Floating tubesheet",
       unit: "no",
-      qty: fixed || bayonet ? 0 : shells,
-      weight: fixed || bayonet ? 0 : tsW / 2,
+      qty: d.mech === "floating" ? shells : 0,
+      weight: d.mech === "floating" ? tsW / tsCount : 0,
       weld: 0,
       category: "Plate",
       material: spec.tubesheetMat,
       thickness: d.tubesheetThk,
       derived: true,
-      detail: fixed
-        ? "not applicable — fixed tubesheet (TEMA M/N)"
-        : bayonet
-          ? "not applicable — bayonet tubes, one tubesheet"
-          : `${d.tubesheetThk} mm, floating head`,
+      detail:
+        d.mech === "floating"
+          ? `${d.tubesheetThk} mm floating tubesheet, TEMA S/T rear head`
+          : d.mech === "fixed"
+            ? "not applicable — fixed tubesheet (TEMA M/N)"
+            : `not applicable — ${d.mech} bundle carries one tubesheet`,
     },
     {
       key: "Floating head cover",
       label: "Floating head cover",
       unit: "no",
-      qty: fixed || bayonet ? 0 : shells,
-      weight: fixed || bayonet ? 0 : plateKg(headArea * 0.55, d.headThk, spec.shellMat) * shells,
-      weld: fixed || bayonet ? 0 : shells * Math.PI * mmToM(D + 40),
+      qty: fixed || d.tubesheetCount === 1 ? 0 : shells,
+      weight: fixed || d.tubesheetCount === 1 ? 0 : plateKg(headArea * 0.55, d.headThk, spec.shellMat) * shells,
+      weld: fixed || d.tubesheetCount === 1 ? 0 : shells * Math.PI * mmToM(D + 40),
       category: "Plate",
       material: spec.shellMat,
       thickness: d.headThk,
       derived: true,
-      detail: fixed ? "not applicable — fixed tubesheet" : "TEMA S/T rear head with backing device",
+      detail: fixed
+        ? "not applicable — fixed tubesheet"
+        : d.tubesheetCount === 1
+          ? "not applicable — U-tube / hairpin bundle, one tubesheet"
+          : "TEMA S/T rear head with backing device",
     },
     {
       key: "Cross baffles",
@@ -605,6 +612,14 @@ export function exchangerToEquipment(u: ExchangerUnit): Equipment {
   const spec: ExchangerSpec = {
     tema: u.tema,
     kind: u.kind,
+    mech: u.mech,
+    orientation: u.orientation,
+    support: u.support,
+    tubeJoint: u.tubeJoint,
+    criticality: u.criticality,
+    criticalityNote: u.criticalityNote,
+    features: u.features,
+    maxBundleKg: u.maxBundleKg,
     shells: u.shells,
     surfaceM2: u.surfaceM2,
     tubeOd: u.tubeOd,

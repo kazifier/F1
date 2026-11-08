@@ -24,6 +24,17 @@
 
 import { headThickness, shellCircumferential, shellLongitudinal } from "./asme";
 import { allowableStress, materialByName } from "./catalog";
+import {
+  classifyExchanger,
+  JOINT_LABEL,
+  MECH_LABEL,
+  tubeLegs,
+  tubesheetCount,
+  type Criticality,
+  type MechType,
+  type Orientation,
+  type TubeJoint,
+} from "./exchangerClass";
 import type { HeNozzleRow } from "./types";
 
 export type TubePattern = "30" | "45" | "90";
@@ -34,7 +45,13 @@ export type TubePattern = "30" | "45" | "90";
  * bayonet      long bayonet / hairpin tubes in a vertical shell
  * fired-heater process heater — radiant + convection coil, not a TEMA item
  */
-export type ExchangerKind = "shell-tube" | "kettle" | "bayonet" | "fired-heater";
+export type ExchangerKind =
+  | "shell-tube"
+  | "kettle"
+  | "bayonet"
+  | "fired-heater"
+  | "hairpin"
+  | "stabbed-in";
 
 export interface ExchangerSpec {
   /** TEMA designation, e.g. BEM / AES / NEN */
@@ -64,6 +81,16 @@ export interface ExchangerSpec {
   tubesheetMat: string;
   channelMat: string;
   insulated: boolean;
+  /** mechanical family — derived from the TEMA rear head when the sheet is silent */
+  mech?: MechType;
+  orientation?: Orientation;
+  support?: string;
+  tubeJoint?: TubeJoint;
+  criticality?: Criticality;
+  criticalityNote?: string;
+  features?: string[];
+  /** bundle pulling limit, kg (UOP limit is 20 t unless the item sheet says otherwise) */
+  maxBundleKg?: number;
 }
 
 export interface DesignCheck {
@@ -117,6 +144,16 @@ export interface ExchangerDesign {
   tieRods: number;
   tubeWallMin: number;
   fixedTubesheet: boolean;
+  /** mechanical classification — fixed / floating / U-tube / hairpin / kettle / stabbed-in / heater */
+  mech: MechType;
+  orientation: Orientation;
+  support: string;
+  tubeJoint: TubeJoint;
+  criticality: Criticality;
+  mechReason: string;
+  features: string[];
+  /** tubesheets on the item — U-tube, hairpin, kettle and stabbed-in bundles have one */
+  tubesheetCount: number;
   /** ASME B16.5 class from the pressure–temperature rating at design temperature */
   flangeClass: string;
   hydrotest: number; // kPa(g), UG-99(b)
@@ -142,45 +179,86 @@ const DENSITY = 7850; // kg/m³ carbon steel fallback
 const density = (mat: string) => materialByName(mat).density || DENSITY;
 const mmToM = (v: number) => v / 1000;
 
-/** tube count per unit bundle area, TEMA RCB-4.5 layouts */
-const layoutEfficiency = (p: TubePattern) => (p === "30" ? 0.907 : p === "45" ? 0.86 : 0.785);
-const cellArea = (p: TubePattern, pitch: number) =>
-  p === "30" ? 0.866 * pitch * pitch : pitch * pitch;
-
 /** TEMA rear-head letter: M/N = fixed tubesheet, S/T/U = floating / U-tube */
 export const isFixedTubesheet = (tema: string) => /^[A-Z][A-Z][MN]/.test(tema.toUpperCase());
 /** removable bundle (for the bundle-weight check and pulling clearance) */
 export const isRemovableBundle = (tema: string) => !isFixedTubesheet(tema);
+
+export interface TubePosition {
+  y: number;
+  z: number;
+}
+
+/**
+ * Real tube positions in a circular bundle: TEMA RCB-4.5 layouts (30° / 45° /
+ * 90°), the RCB-4.51 bundle-to-shell clearance and the pass-partition lanes are
+ * taken out. The count is the number of tubes the bundle actually holds, and
+ * the same positions drive the 3D model.
+ */
+export function tubeLayout(
+  shellId: number,
+  spec: Pick<ExchangerSpec, "tubeOd" | "pitch" | "pattern" | "tubePasses">,
+): { positions: TubePosition[]; count: number; bundleDia: number; clearance: number } {
+  const clearance = shellId < 600 ? 13 : 19; // TEMA RCB-4.51, mm
+  const bundleDia = Math.max(120, shellId - 2 * clearance);
+  const radius = bundleDia / 2 - spec.tubeOd / 2;
+  const pitch = Math.max(spec.pitch, spec.tubeOd + 3);
+  const rowStep =
+    spec.pattern === "30" ? pitch * 0.8660254 : spec.pattern === "45" ? pitch * Math.SQRT1_2 : pitch;
+  // pass partition lane, mm — one lane for 2 passes, a cross for 4 passes
+  const lane = spec.tubePasses >= 2 ? pitch * (spec.tubePasses >= 4 ? 1.3 : 0.9) : 0;
+  const positions: TubePosition[] = [];
+  let row = 0;
+  for (let y = -radius; y <= radius + 1e-6; y += rowStep, row++) {
+    const shift = spec.pattern !== "90" && row % 2 === 1 ? pitch / 2 : 0;
+    for (let z = -radius + shift; z <= radius - shift; z += pitch) {
+      if (y * y + z * z > radius * radius) continue;
+      if (spec.tubePasses >= 2 && Math.abs(z) < lane / 2) continue;
+      if (spec.tubePasses >= 4 && Math.abs(y) < lane / 2) continue;
+      positions.push({ y, z });
+    }
+  }
+  return { positions, count: positions.length, bundleDia, clearance };
+}
 
 /** tubes that fit in a shell of the given ID for the chosen layout and passes */
 export function tubeCountFor(
   shellId: number,
   spec: Pick<ExchangerSpec, "tubeOd" | "pitch" | "pattern" | "tubePasses">,
 ): number {
-  const bundleDia = Math.max(150, shellId * 0.92); // TEMA bundle-to-shell clearance
-  const grossArea = (Math.PI / 4) * bundleDia * bundleDia;
-  const usable = grossArea * layoutEfficiency(spec.pattern);
-  const perTube = cellArea(spec.pattern, spec.pitch);
-  const passLoss = 1 + 0.06 * Math.max(0, spec.tubePasses - 1); // pass partition lanes
-  return Math.max(1, Math.floor(usable / perTube / passLoss));
+  return Math.max(1, tubeLayout(shellId, spec).count);
 }
 
 export const surfaceOf = (tubeCount: number, od: number, length: number) =>
   Math.PI * mmToM(od) * mmToM(length) * tubeCount;
 
 /** smallest standard shell ID (50 mm steps) that gives the required surface */
-function sizeShell(spec: ExchangerSpec): { shellId: number; tubeCount: number; surface: number } {
+function sizeShell(
+  spec: ExchangerSpec,
+  mech: MechType,
+): { shellId: number; tubeCount: number; surface: number } {
   const target = spec.surfaceM2 / Math.max(1, spec.shells);
-  // a bayonet / hairpin tube is two lengths of surface per element
-  const perTubeLength = spec.kind === "bayonet" ? spec.tubeLength * 2 : spec.tubeLength;
-  for (let id = 250; id <= 4000; id += 50) {
+  // a hairpin / bayonet element is two legs, so it gives two lengths of surface
+  const perTubeLength = spec.tubeLength * tubeLegs(mech);
+  const evaluate = (id: number) => {
     const n = tubeCountFor(id, spec);
-    const s = surfaceOf(n, spec.tubeOd, perTubeLength);
-    if (s >= target) return { shellId: id, tubeCount: n, surface: s };
+    return { shellId: id, tubeCount: n, surface: surfaceOf(n, spec.tubeOd, perTubeLength) };
+  };
+  // surface grows monotonically with the shell ID — binary search the 50 mm ladder
+  let lo = 250;
+  let hi = 4000;
+  let best: { shellId: number; tubeCount: number; surface: number } | null = null;
+  while (lo <= hi) {
+    const mid = Math.min(4000, Math.max(250, Math.round((lo + hi) / 100) * 50));
+    const cand = evaluate(mid);
+    if (cand.surface >= target) {
+      best = cand;
+      hi = mid - 50;
+    } else {
+      lo = mid + 50;
+    }
   }
-  const id = 4000;
-  const n = tubeCountFor(id, spec);
-  return { shellId: id, tubeCount: n, surface: surfaceOf(n, spec.tubeOd, perTubeLength) };
+  return best ?? evaluate(4000);
 }
 
 // ---------------------------------------------------------------------------
@@ -239,16 +317,20 @@ export const flangeClass = (kpa: number) => ratingFor(kpa);
 function tubesheetThickness(
   spec: ExchangerSpec,
   shellId: number,
-): { tema: number; ug34: number; taken: number } {
+  joint: TubeJoint,
+): { tema: number; ug34: number; taken: number; F: number } {
   const S = allowableStress(materialByName(spec.tubesheetMat), spec.shellTemp);
   const P = Math.max(spec.shellPressure, spec.tubePressure) / 1000; // MPa
-  const G = shellId + 60; // gasket reaction mean diameter
-  const F = isFixedTubesheet(spec.tema) ? 0.5 : 0.45; // TEMA RCB-7.2 plate coefficient
+  const G = shellId + 60; // gasket reaction mean diameter, mm
+  // TEMA RCB-7.2: F = 1.25 where the tubesheet is gasketed between the shell and
+  // channel flanges, F = 1.0 where it is welded / extended as a flange
+  const F = joint === "expanded+strength" || joint === "welded" ? 1.0 : 1.25;
   const tema = F * G * Math.sqrt(P / Math.max(1, S));
   const ug34 = G * Math.sqrt((0.33 * P) / Math.max(1, S)); // UG-34(c)(2), C = 0.33
   const governing = Math.max(tema, ug34);
-  const taken = Math.max(20, Math.ceil((governing + spec.ca) / 5) * 5);
-  return { tema, ug34, taken };
+  // TEMA RCB-7.13 minimum plate plus the corrosion allowance, on a 5 mm step
+  const taken = Math.max(19, Math.ceil((governing + spec.ca) / 5) * 5);
+  return { tema, ug34, taken, F };
 }
 
 /** API 560 fired heater screening, used when kind = fired-heater */
@@ -290,7 +372,10 @@ function heaterDesign(spec: ExchangerSpec): HeaterDesign {
 export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerDesign {
   const kind: ExchangerKind = input.kind ?? "shell-tube";
   const spec: ExchangerSpec = { ...input, kind, shells: Math.max(1, input.shells) };
-  const { shellId: bundleShellId, tubeCount, surface } = sizeShell(spec);
+  const cls = classifyExchanger(spec);
+  const mech = cls.mech;
+  const joint = cls.tubeJoint;
+  const { shellId: bundleShellId, tubeCount, surface } = sizeShell(spec, mech);
 
   // a K shell is enlarged so the vapour can disengage above the bundle
   const shellId =
@@ -314,15 +399,16 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
   const channelRequired = shellCircumferential(Pc, shellId, Sc, E, spec.ca).required;
   const channelThk = Math.max(10, Math.ceil(channelRequired / 2) * 2);
 
-  const ts = tubesheetThickness(spec, shellId);
+  const ts = tubesheetThickness(spec, shellId, joint);
   const tubesheetThk = ts.taken;
 
   // baffles: TEMA RG-7.11 spacing between 0.2 and 1.0 × shell ID
   const spacing = Math.min(shellId, Math.max(200, Math.round((shellId * 0.4) / 10) * 10));
   const baffleSpacing = Math.max(200, Math.min(spacing, 1000));
-  const baffleCount = isRemovableBundle(spec.tema)
-    ? Math.max(2, Math.round((spec.tubeLength - 100) / baffleSpacing) - 1)
-    : Math.max(2, Math.round(spec.tubeLength / 1500));
+  const baffleCount =
+    mech === "fixed"
+      ? Math.max(2, Math.round(spec.tubeLength / 1500))
+      : Math.max(2, Math.round((spec.tubeLength - 100) / baffleSpacing) - 1);
 
   const tieRods =
     shellId < 400 ? 4 : shellId < 900 ? 6 : shellId < 1300 ? 8 : shellId < 1700 ? 10 : 12;
@@ -342,7 +428,7 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
   const channelW = mass(areaOf(shellId, channelThk, channelL), channelThk, spec.channelMat);
   const headArea = 1.084 * Math.pow(mmToM(shellId), 2);
   const headsW = 3 * mass(headArea, headThk, spec.shellMat); // 2 shell covers + channel head
-  const tubeLengthPerTube = kind === "bayonet" ? spec.tubeLength * 2 : spec.tubeLength;
+  const tubeLengthPerTube = spec.tubeLength * tubeLegs(mech);
   const tubeW = tubesTotal
     ? tubeCount *
       Math.PI *
@@ -352,7 +438,8 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
       density(spec.tubeMat)
     : 0;
   const tsArea = (Math.PI / 4) * Math.pow(mmToM(shellId + 80), 2);
-  const tubesheetsW = kind === "bayonet" ? mass(tsArea, tubesheetThk, spec.tubesheetMat) : 2 * mass(tsArea, tubesheetThk, spec.tubesheetMat);
+  const tsCount = tubesheetCount(mech);
+  const tubesheetsW = tsCount * mass(tsArea, tubesheetThk, spec.tubesheetMat);
   const baffleT = Math.max(6, spec.tubeOd * 0.3);
   const baffleW =
     baffleCount * mass((Math.PI / 4) * Math.pow(mmToM(bundleDia), 2) * 0.78, baffleT, spec.shellMat);
@@ -397,10 +484,22 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
     {
       code: "TEMA RCB-7.2 / UG-34",
       item: "Tubesheet",
-      detail: `${isFixedTubesheet(spec.tema) ? "fixed" : "floating / U-tube"} plate: TEMA ${ts.tema.toFixed(
+      detail: `${MECH_LABEL[mech]} plate, F ${ts.F.toFixed(2)}: TEMA ${ts.tema.toFixed(
         1,
-      )} mm, UG-34 ${ts.ug34.toFixed(1)} mm → taken ${tubesheetThk} mm incl. CA`,
+      )} mm, UG-34 ${ts.ug34.toFixed(1)} mm → taken ${tubesheetThk} mm incl. CA ${spec.ca} mm`,
       ok: tubesheetThk >= Math.max(ts.tema, ts.ug34) + spec.ca - 0.1,
+    },
+    {
+      code: "TEMA RCB-7.3 / UOP 3-11",
+      item: "Tube-to-tubesheet joint",
+      detail: `${JOINT_LABEL[joint]} — ${tsCount} tubesheet${tsCount === 1 ? "" : "s"}, ${tubeCount} tubes per shell`,
+      ok: joint !== "expanded+strength" || spec.ca >= 3 || Math.max(spec.shellPressure, spec.tubePressure) >= 3000,
+    },
+    {
+      code: "Mechanical",
+      item: "Classification",
+      detail: `${MECH_LABEL[mech]} · ${cls.orientation} · ${cls.support} · criticality ${cls.criticality}`,
+      ok: true,
     },
     {
       code: "ASME B16.5",
@@ -464,7 +563,7 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
   // a fired heater is not a TEMA item: its sheet is the coil, casing and
   // burner screening, so the tubesheet / baffle / girth-flange checks do not apply
   const checksForKind: DesignCheck[] =
-    kind === "fired-heater"
+    mech === "fired-heater"
       ? [
           {
             code: "TEMA",
@@ -478,8 +577,10 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
       : checks;
 
   const bundleWeight = tubeW + tubesheetsW + baffleW;
-  // UOP limits bundle pulling to 20 t — add a shell in parallel until it fits
-  if (bundleWeight > 20000 && autoSplit < 5 && kind !== "fired-heater") {
+  // UOP limits bundle pulling to 20 t — add a shell in parallel until it fits,
+  // unless the item sheet allows a heavier (single vertical) pull
+  const bundleLimit = spec.maxBundleKg ?? 20000;
+  if (bundleWeight > bundleLimit && autoSplit < 5 && mech !== "fired-heater") {
     return designExchanger({ ...spec, shells: spec.shells + 1 }, autoSplit + 1);
   }
 
@@ -488,7 +589,7 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
     kind,
     shellId,
     bundleDia,
-    tubeCount: kind === "fired-heater" && heater ? heater.coilTubes : tubeCount,
+    tubeCount: mech === "fired-heater" && heater ? heater.coilTubes : tubeCount,
     tubesTotal,
     surfacePerShell: surface,
     surfaceTotal,
@@ -506,7 +607,15 @@ export function designExchanger(input: ExchangerSpec, autoSplit = 0): ExchangerD
     baffleCut: 25,
     tieRods,
     tubeWallMin,
-    fixedTubesheet: isFixedTubesheet(spec.tema),
+    fixedTubesheet: mech === "fixed",
+    mech,
+    orientation: cls.orientation,
+    support: cls.support,
+    tubeJoint: joint,
+    criticality: cls.criticality,
+    mechReason: cls.reason,
+    features: cls.features,
+    tubesheetCount: tsCount,
     flangeClass: flangeClassDesign,
     hydrotest,
     hydrotestClass,
@@ -543,7 +652,7 @@ export function defaultExchangerNozzles(spec: ExchangerSpec, design?: ExchangerD
   const D = d.shellId;
   const big = D <= 400 ? 168.3 : D <= 700 ? 219.1 : D <= 1000 ? 273.1 : D <= 1400 ? 323.9 : D <= 1800 ? 406.4 : 508;
   const small = D <= 400 ? 114.3 : D <= 1000 ? 168.3 : 219.1;
-  const shellSide = d.kind !== "kettle";
+  const shellSide = d.kind !== "kettle" && d.kind !== "stabbed-in";
   const rows: HeNozzleRow[] = [
     { mark: "S1", service: shellSide ? "Shell inlet" : "Kettle vapour outlet", nps: npsFromOd(big), qty: 1, pressure: spec.shellPressure, temperature: spec.shellTemp, shellSide: true },
     { mark: "S2", service: "Shell outlet", nps: npsFromOd(small), qty: 1, pressure: spec.shellPressure, temperature: spec.shellTemp, shellSide: true },
