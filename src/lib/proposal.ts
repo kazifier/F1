@@ -72,6 +72,8 @@ export interface DocTable {
   /** relative column widths */
   widths?: number[];
   align?: ("left" | "right" | "center")[];
+  /** the last row is a total — render it emphasised */
+  emphasiseLast?: boolean;
 }
 
 export interface DocSubsection {
@@ -141,6 +143,8 @@ export interface ProposalDoc {
   sections: DocSection[];
   payment: PaymentMilestone[];
   coverage: MaterialCoverage;
+  deliveryWeeks: number;
+  validityDays: number;
   priceRows: PriceRow[];
   totals: { material: number; exWorks: number; freight: number; grand: number; weight: number };
   currency: CurrencyDef;
@@ -424,6 +428,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     head: ["Item", "Description", "Qty", "Weight (kg)", "Unit price", "Amount"],
     widths: [0.7, 4.2, 0.6, 1.0, 1.4, 1.5],
     align: ["left", "left", "center", "right", "right", "right"],
+    emphasiseLast: true,
     rows: [
       ...priceRows.map((r) => [
         r.tag,
@@ -448,13 +453,17 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     head: ["No", "Milestone", "Type", "%", "Amount"],
     widths: [0.4, 6, 1.1, 0.8, 1.5],
     align: ["center", "left", "center", "right", "right"],
-    rows: payment.map((p) => [
-      String(p.no),
-      p.trigger,
-      p.kind,
-      `${fmtNum(p.pct, 1)}%`,
-      priced ? money(p.amount) : "—",
-    ]),
+    emphasiseLast: true,
+    rows: [
+      ...payment.map((p) => [
+        String(p.no),
+        p.trigger,
+        p.kind,
+        `${fmtNum(p.pct, 1)}%`,
+        priced ? money(p.amount) : "—",
+      ]),
+      ["", "Total", "", `${fmtNum(payment.reduce((a, p) => a + p.pct, 0), 1)}%`, priced ? money(grand) : "—"],
+    ],
   };
 
   // ---- sections -------------------------------------------------------------
@@ -729,6 +738,8 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     sections,
     payment,
     coverage,
+    deliveryWeeks: settings.deliveryWeeks,
+    validityDays: settings.validityDays,
     priceRows,
     totals: { material, exWorks, freight, grand, weight },
     currency,
