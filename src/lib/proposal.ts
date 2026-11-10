@@ -1,0 +1,742 @@
+// ---------------------------------------------------------------------------
+// Proposal preparation
+//
+// One document model behind every offer the company issues: a technical offer,
+// a commercial offer, a full techno-commercial offer, or an unpriced commercial
+// offer for commercial review without prices. Nothing here is typed twice — the
+// equipment schedule comes from the design pages, the prices from the BOQ
+// roll-up, the freight line from the logistics basis, and the payment schedule
+// from the material content of the quoted price.
+// ---------------------------------------------------------------------------
+import type {
+  Equipment,
+  LogisticsSettings,
+  ProjectInfo,
+  ProposalSettings,
+  RateBook,
+  ScopeParty,
+} from "./types";
+import { buildBoq, buildEquipmentBom, rollupCost } from "./bom";
+import { destinationOf, landedCost, WORKSHOP } from "./logistics";
+import { formatMoney, getCurrency, type CurrencyDef } from "./currency";
+
+export type ScopeMark = "R" | "A" | "C" | "I" | "-";
+
+export const SCOPE_MARKS: { mark: ScopeMark; label: string }[] = [
+  { mark: "R", label: "Responsible / executes" },
+  { mark: "A", label: "Approves" },
+  { mark: "C", label: "Consulted / reviews" },
+  { mark: "I", label: "Informed" },
+  { mark: "-", label: "Not in scope" },
+];
+
+export interface ScopeRowDef {
+  id: string;
+  item: string;
+  defaults: Record<ScopeParty, ScopeMark>;
+}
+
+/** Scope of supply split three ways: the plant owner, the EPC that places the PO, and us. */
+export const SCOPE_ROWS: ScopeRowDef[] = [
+  { id: "pm", item: "Project management, expediting and progress reporting", defaults: { endUser: "I", client: "A", ramsis: "R" } },
+  { id: "design", item: "Mechanical design calculations to ASME VIII Div.1", defaults: { endUser: "I", client: "A", ramsis: "R" } },
+  { id: "drawings", item: "Fabrication drawings, general arrangement and nozzle orientation", defaults: { endUser: "I", client: "A", ramsis: "R" } },
+  { id: "stamp", item: "ASME ‘U’ stamp design certification and National Board registration", defaults: { endUser: "I", client: "C", ramsis: "R" } },
+  { id: "itp", item: "Inspection and test plan (ITP) and quality dossier", defaults: { endUser: "I", client: "A", ramsis: "R" } },
+  { id: "material", item: "Raw material procurement, mill certification and traceability", defaults: { endUser: "-", client: "C", ramsis: "R" } },
+  { id: "fabrication", item: "Shop fabrication, fit-up and assembly", defaults: { endUser: "-", client: "C", ramsis: "R" } },
+  { id: "welding", item: "Welding, WPS / PQR and welder qualification to ASME IX", defaults: { endUser: "-", client: "C", ramsis: "R" } },
+  { id: "nde", item: "Non-destructive examination (RT / UT / MT / PT)", defaults: { endUser: "I", client: "C", ramsis: "R" } },
+  { id: "hydro", item: "Hydrostatic test and dimensional inspection", defaults: { endUser: "I", client: "C", ramsis: "R" } },
+  { id: "pwht", item: "Post-weld heat treatment (where specified)", defaults: { endUser: "-", client: "C", ramsis: "R" } },
+  { id: "painting", item: "Surface preparation and protective painting", defaults: { endUser: "-", client: "C", ramsis: "R" } },
+  { id: "tpi", item: "Third-party inspection (TPI) and client witness points", defaults: { endUser: "I", client: "R", ramsis: "C" } },
+  { id: "internals", item: "Supply and fitting of internals (trays, demister, vortex breaker)", defaults: { endUser: "-", client: "C", ramsis: "R" } },
+  { id: "spares", item: "Pre-commissioning spares — 200% gaskets, 10% bolts and nuts", defaults: { endUser: "-", client: "I", ramsis: "R" } },
+  { id: "packing", item: "Seaworthy packing, marking and preservation", defaults: { endUser: "-", client: "I", ramsis: "R" } },
+  { id: "transport", item: "Transport from workshop to site", defaults: { endUser: "-", client: "A", ramsis: "R" } },
+  { id: "site", item: "Site installation, commissioning and insulation / fireproofing", defaults: { endUser: "R", client: "A", ramsis: "-" } },
+];
+
+export const scopeMark = (settings: ProposalSettings, row: ScopeRowDef, party: ScopeParty): ScopeMark => {
+  const set = settings.scope?.[`${row.id}|${party}`];
+  return (set as ScopeMark) || row.defaults[party];
+};
+
+// ---------------------------------------------------------------------------
+// Document model — renderer independent, so Word and PDF print the same thing
+// ---------------------------------------------------------------------------
+export interface DocTable {
+  head: string[];
+  rows: string[][];
+  /** relative column widths */
+  widths?: number[];
+  align?: ("left" | "right" | "center")[];
+}
+
+export interface DocSubsection {
+  title: string;
+  paragraphs?: string[];
+  bullets?: string[];
+}
+
+export interface DocSection {
+  no: string;
+  title: string;
+  paragraphs?: string[];
+  bullets?: string[];
+  subsections?: DocSubsection[];
+  table?: DocTable;
+  note?: string;
+}
+
+export interface DocMeta {
+  label: string;
+  value: string;
+}
+
+export interface PaymentMilestone {
+  no: number;
+  trigger: string;
+  kind: "Material" | "Progress";
+  pct: number;
+  amount: number;
+}
+
+export interface MaterialCoverage {
+  material: number;
+  materialPct: number;
+  materialPaidPct: number;
+  materialPaid: number;
+  covered: boolean;
+}
+
+export interface PriceRow {
+  tag: string;
+  description: string;
+  qty: number;
+  weight: number;
+  unitPrice: number;
+  amount: number;
+  kind: "equipment" | "freight";
+}
+
+export interface ProposalDoc {
+  offerType: ProposalSettings["offerType"];
+  title: string;
+  subtitle: string;
+  offerNo: string;
+  revision: string;
+  date: string;
+  dateLabel: string;
+  attention: string;
+  client: string;
+  clientAddress: string;
+  endUser: string;
+  subject: string;
+  meta: DocMeta[];
+  intro: string[];
+  closing: string[];
+  signature: string[];
+  sections: DocSection[];
+  payment: PaymentMilestone[];
+  coverage: MaterialCoverage;
+  priceRows: PriceRow[];
+  totals: { material: number; exWorks: number; freight: number; grand: number; weight: number };
+  currency: CurrencyDef;
+  priced: boolean;
+  amountInWords: string;
+  scopeTable: DocTable;
+}
+
+export interface ProposalInput {
+  project: ProjectInfo;
+  equipment: Equipment[];
+  rates: RateBook;
+  logistics: LogisticsSettings;
+  sourcing: Record<string, string>;
+  settings: ProposalSettings;
+}
+
+const fmtInt = (v: number) => Math.round(v).toLocaleString("en-US");
+const fmtNum = (v: number, d = 1) =>
+  Number.isFinite(v) ? v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : "-";
+
+const dateLabel = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+};
+
+const titleCase = (s: string) =>
+  s
+    .split(/\s+/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+
+// ---------------------------------------------------------------------------
+// Amount in words — every offer closes with the price written out
+// ---------------------------------------------------------------------------
+const ONES = [
+  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen",
+];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+function below1000(n: number): string {
+  if (n < 20) return ONES[n];
+  if (n < 100) return `${TENS[Math.floor(n / 10)]}${n % 10 ? `-${ONES[n % 10]}` : ""}`;
+  return `${ONES[Math.floor(n / 100)]} Hundred${n % 100 ? ` and ${below1000(n % 100)}` : ""}`;
+}
+
+export function numberInWords(value: number): string {
+  const n = Math.floor(Math.abs(value));
+  if (n === 0) return "Zero";
+  const groups = [
+    { size: 1e9, name: "Billion" },
+    { size: 1e6, name: "Million" },
+    { size: 1e3, name: "Thousand" },
+  ];
+  const parts: string[] = [];
+  let rest = n;
+  for (const g of groups) {
+    if (rest >= g.size) {
+      const count = Math.floor(rest / g.size);
+      parts.push(`${below1000(count)} ${g.name}`);
+      rest -= count * g.size;
+    }
+  }
+  if (rest > 0) parts.push(below1000(rest));
+  return parts.join(" ");
+}
+
+const MINOR_UNIT: Record<string, string> = {
+  BHD: "fils",
+  KWD: "fils",
+  OMR: "baisa",
+  SAR: "halalas",
+  QAR: "dirhams",
+  AED: "fils",
+  USD: "cents",
+  EUR: "cents",
+};
+
+export function amountInWords(amountBhd: number, currency: CurrencyDef): string {
+  const value = amountBhd * currency.perBhd;
+  const whole = Math.floor(value + 1e-9);
+  const minorValue = Math.round((value - whole) * Math.pow(10, currency.decimals));
+  const minor = minorValue > 0 ? ` and ${numberInWords(minorValue)} ${MINOR_UNIT[currency.code] ?? "cents"}` : "";
+  return `${titleCase(currency.name)} ${numberInWords(whole)}${minor} only`;
+}
+
+// ---------------------------------------------------------------------------
+// Payment schedule — the material must be fully funded before fabrication
+// ---------------------------------------------------------------------------
+function buildPayment(
+  settings: ProposalSettings,
+  material: number,
+  grand: number,
+): { payment: PaymentMilestone[]; coverage: MaterialCoverage } {
+  const materialPct = grand > 0 ? (material / grand) * 100 : 0;
+  const advance = Math.max(0, settings.advancePct);
+  const onPo = Math.max(0, settings.materialPoPct);
+  // material payments must reach the full material content of the price
+  const toReceipt = Math.max(0, +(materialPct - advance - onPo).toFixed(1));
+  const materialPaidPct = +(advance + onPo + toReceipt).toFixed(1);
+  const remaining = Math.max(0, +(100 - materialPaidPct).toFixed(1));
+  const retention = Math.min(Math.max(0, settings.retentionPct), remaining);
+  const progress = +(remaining - retention).toFixed(1);
+  const fabricationStage = +(progress * 0.6).toFixed(1);
+  const dispatchStage = +(progress - fabricationStage).toFixed(1);
+  // rounding correction lands on the last milestone so the schedule totals 100%
+  const last = +(retention + (100 - (materialPaidPct + progress + retention))).toFixed(1);
+
+  const rows: PaymentMilestone[] = [
+    { no: 1, trigger: "Advance payment with the purchase order, against an advance payment guarantee", kind: "Material", pct: advance, amount: 0 },
+    { no: 2, trigger: "Against release of purchase orders for major raw material — plates, heads, SRN forgings, pipe, flanges and tube", kind: "Material", pct: onPo, amount: 0 },
+  ];
+  if (toReceipt > 0) {
+    rows.push({
+      no: 3,
+      trigger: "Against receipt of major raw material at the Ramsis workshop, Sitra, with mill certificates and unpriced PO copies",
+      kind: "Material",
+      pct: toReceipt,
+      amount: 0,
+    });
+  }
+  if (fabricationStage > 0) {
+    rows.push({
+      no: rows.length + 1,
+      trigger: "On completion of fabrication, NDE and hydrostatic test, against the inspection release note",
+      kind: "Progress",
+      pct: fabricationStage,
+      amount: 0,
+    });
+  }
+  if (dispatchStage > 0) {
+    rows.push({
+      no: rows.length + 1,
+      trigger: "Before dispatch of the equipment from the Ramsis workshop",
+      kind: "Progress",
+      pct: dispatchStage,
+      amount: 0,
+    });
+  }
+  if (last > 0) {
+    rows.push({
+      no: rows.length + 1,
+      trigger: "On submission of the final documentation dossier (MDR) and as-built drawings",
+      kind: "Progress",
+      pct: last,
+      amount: 0,
+    });
+  }
+  const payment = rows.map((r) => ({ ...r, amount: (r.pct / 100) * grand }));
+
+  return {
+    payment,
+    coverage: {
+      material,
+      materialPct: +materialPct.toFixed(1),
+      materialPaidPct,
+      materialPaid: (materialPaidPct / 100) * grand,
+      covered: materialPaidPct + 1e-6 >= materialPct,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Main builder
+// ---------------------------------------------------------------------------
+export function buildProposal(input: ProposalInput): ProposalDoc {
+  const { project, equipment, rates, logistics, sourcing, settings } = input;
+  const currency = getCurrency(project.currency);
+  const money = (v: number) => formatMoney(v, project.currency);
+
+  const linesPerEquipment = equipment.map((eq) => {
+    const bom = buildEquipmentBom(eq, rates);
+    const roll = rollupCost(eq, bom, rates);
+    const weight = bom.reduce((a, i) => a + i.weight, 0) * eq.qty;
+    return { eq, roll, weight };
+  });
+
+  const exWorks = linesPerEquipment.reduce((a, r) => a + r.roll.total * r.eq.qty, 0);
+  const material = linesPerEquipment.reduce((a, r) => a + r.roll.material * r.eq.qty, 0);
+  const weight = linesPerEquipment.reduce((a, r) => a + r.weight, 0);
+
+  // ---- delivery leg, only when the offer is not ex-works ---------------------
+  let freight = 0;
+  if (logistics.incoterm !== "EXW" && equipment.length > 0) {
+    const items = equipment.flatMap((eq) =>
+      buildEquipmentBom(eq, rates).map((it) => ({
+        ...it,
+        qty: it.qty * eq.qty,
+        qtySpare: (it.qtySpare ?? 0) * eq.qty,
+        weight: it.weight * eq.qty,
+        amount: it.amount * eq.qty,
+      })),
+    );
+    const boq = buildBoq(equipment, items, rates);
+    const landing = boq.lines.map((line) => ({
+      line,
+      breakdown: landedCost(line, sourcing[line.key] ?? logistics.defaultOrigin, logistics),
+    }));
+    const dest = destinationOf(logistics.destination);
+    freight = landing.reduce(
+      (a, e) => a + e.breakdown.exportFreight + e.breakdown.exportDuty + e.breakdown.insurance / 2 + e.breakdown.surcharge / 2,
+      0,
+    );
+    if (dest.name !== WORKSHOP.country) freight += dest.clearance + logistics.documentation;
+  }
+
+  const grand = exWorks + freight;
+  const priced = settings.offerType !== "Unpriced Commercial" && settings.offerType !== "Technical";
+  const { payment, coverage } = buildPayment(settings, material, grand);
+
+  const clientName = settings.client.trim() || project.client;
+  const endUserName = settings.endUser.trim() || project.client;
+  // a name that already ends in a full stop must not produce "Ltd.." in a sentence
+  const endUserClean = endUserName.replace(/\.\s*$/, "");
+  const subject =
+    settings.subject.trim() ||
+    `supply of ${equipment.map((e) => e.name).filter(Boolean).slice(0, 3).join(", ")}${equipment.length > 3 ? " and associated equipment" : ""}`;
+  const totalQty = equipment.reduce((a, e) => a + e.qty, 0);
+  const tags = equipment.map((e) => `${e.tag} (${e.name})`).join(", ");
+  const dateText = dateLabel(settings.date);
+
+  const scopeTable: DocTable = {
+    head: ["#", "Scope item", "End user", "Client (EPC)", "Ramsis"],
+    widths: [0.5, 6, 1.2, 1.4, 1.2],
+    align: ["center", "left", "center", "center", "center"],
+    rows: SCOPE_ROWS.map((row, i) => [
+      String(i + 1),
+      row.item,
+      scopeMark(settings, row, "endUser"),
+      scopeMark(settings, row, "client"),
+      scopeMark(settings, row, "ramsis"),
+    ]),
+  };
+
+  const priceRows: PriceRow[] = linesPerEquipment.map((r) => ({
+    tag: r.eq.tag,
+    description: `${r.eq.name}${r.eq.service ? ` — ${r.eq.service}` : ""}`,
+    qty: r.eq.qty,
+    weight: r.weight,
+    unitPrice: r.roll.total,
+    amount: r.roll.total * r.eq.qty,
+    kind: "equipment",
+  }));
+  if (freight > 0) {
+    priceRows.push({
+      tag: "—",
+      description: `Packing, freight, insurance and destination clearing to ${destinationOf(logistics.destination).name} (${logistics.incoterm})`,
+      qty: 1,
+      weight: 0,
+      unitPrice: freight,
+      amount: freight,
+      kind: "freight",
+    });
+  }
+
+  // ---- equipment schedule ---------------------------------------------------
+  const equipmentTable: DocTable = {
+    head: ["Tag", "Service / description", "Size ID × T/T", "Qty", "Design P", "Design T", "Material", "Weight (kg)"],
+    widths: [0.9, 2.6, 1.5, 0.5, 1.0, 1.0, 1.5, 1.1],
+    align: ["left", "left", "left", "center", "right", "right", "left", "right"],
+    rows: linesPerEquipment.map(({ eq, weight: w }) => {
+      const shellMat = eq.parts.shell?.[0]?.sh_mat || eq.parts.head?.[0]?.hd_mat || "SA-516 Gr.70";
+      const p = eq.he ? eq.he.shellPressure : eq.designPressure;
+      const t = eq.he ? eq.he.shellTemp : eq.designTemperature;
+      return [
+        eq.tag,
+        `${eq.name}${eq.service ? ` — ${eq.service}` : ""}`,
+        `${fmtInt(eq.diameter)} × ${fmtInt(eq.ttLength)} mm`,
+        String(eq.qty),
+        `${fmtInt(p)} kPa`,
+        `${fmtInt(t)} °C`,
+        shellMat,
+        fmtInt(w),
+      ];
+    }),
+  };
+
+  const priceTable: DocTable = {
+    head: ["Item", "Description", "Qty", "Weight (kg)", "Unit price", "Amount"],
+    widths: [0.7, 4.2, 0.6, 1.0, 1.4, 1.5],
+    align: ["left", "left", "center", "right", "right", "right"],
+    rows: [
+      ...priceRows.map((r) => [
+        r.tag,
+        r.description,
+        String(r.qty),
+        r.weight ? fmtInt(r.weight) : "—",
+        priced ? money(r.unitPrice) : "—",
+        priced ? money(r.amount) : "—",
+      ]),
+      [
+        "",
+        "Total — quoted price, excluding VAT",
+        "",
+        fmtInt(weight),
+        "",
+        priced ? money(grand) : "Withheld (unpriced commercial offer)",
+      ],
+    ],
+  };
+
+  const paymentTable: DocTable = {
+    head: ["No", "Milestone", "Type", "%", "Amount"],
+    widths: [0.4, 6, 1.1, 0.8, 1.5],
+    align: ["center", "left", "center", "right", "right"],
+    rows: payment.map((p) => [
+      String(p.no),
+      p.trigger,
+      p.kind,
+      `${fmtNum(p.pct, 1)}%`,
+      priced ? money(p.amount) : "—",
+    ]),
+  };
+
+  // ---- sections -------------------------------------------------------------
+  const sections: DocSection[] = [];
+  let no = 0;
+  const add = (title: string, body: Omit<DocSection, "no" | "title"> = {}) => {
+    sections.push({ no: String(++no), title, ...body });
+  };
+
+  const technical = settings.offerType !== "Commercial" && settings.offerType !== "Unpriced Commercial";
+
+  if (technical) {
+    add("Applicable documents", {
+      bullets: [
+        `Our offer ${settings.offerNo} Rev. ${settings.revision || "R0"} dated ${dateText}.`,
+        `Enquiry ${project.projectNo} — ${project.projectName}${settings.enquiryRef ? `, RFQ reference ${settings.enquiryRef}` : ""}.`,
+        `Mechanical datasheet(s) and drawings issued for ${tags}, as provided by ${endUserClean}.`,
+        "ASME Boiler & Pressure Vessel Code, Section VIII, Division 1 (latest edition), ASME Section IX and ASME Section V.",
+      ],
+    });
+  }
+
+  add("Scope matrix — end user, client and Ramsis", {
+    table: scopeTable,
+    paragraphs: [
+      "The matrix below fixes who does what between the three parties to this offer. The end user owns the plant and is the ultimate approver of the equipment specification; the client (EPC) issues the purchase order and administers the contract; Ramsis Engineering designs, manufactures, tests and delivers the equipment.",
+      "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
+    ],
+  });
+
+  if (technical) {
+    add("Scope of work and supply", {
+      subsections: [
+        {
+          title: "Engineering",
+          bullets: [
+            "Preparation and submission of detailed mechanical design calculations for approval, based on the datasheet and drawings issued by the end user.",
+            "Preparation and submission of fabrication drawings, general arrangement and nozzle orientation for the pressure equipment.",
+            `ASME ‘U’ stamp design certification and National Board registration for ${totalQty} item(s).`,
+            "Preparation and submission of the inspection and test plan (ITP) and the manufacturing record dossier (MDR) index for approval.",
+          ],
+        },
+        {
+          title: "Codes and regulations",
+          bullets: [
+            "Design and manufacture to ASME Section VIII, Division 1 (latest edition).",
+            "Welding to ASME Section IX; non-destructive examination to ASME Section V.",
+            "Flanges to ASME B16.5 and pipe to ASME B36.10 / B36.19 as scheduled.",
+            "End-user and client specifications as stated in the RFQ, wherever they are more stringent than the code.",
+          ],
+        },
+        {
+          title: "Production and supply",
+          bullets: [
+            "Material procurement to the approved fabrication drawings and material list, with full traceability.",
+            "Shop fabrication, fit-up and assembly of the equipment with its support arrangement (skirt, saddles or legs as designed).",
+            "All welded internals for supporting removable internals, trays, demister and vortex breaker where shown on the datasheet.",
+            "Supply and fabrication of lifting lugs, tailing lugs, anchor chair template, grounding lugs, pipe and instrument support clips, ladder and platform support clips, fireproofing clips and the mesh screen for the skirt access opening.",
+            "Internal gaskets and bolting, ladder rungs and grab handles at manways, and deflector plates where shown.",
+            "Non-destructive examination, hydrostatic test and post-weld heat treatment as specified.",
+            "Surface preparation and protective painting to the specified system.",
+            "Seaworthy packing suitable for road, sea and inland transport.",
+            "Final documentation dossier, as-built drawings and material test certificates.",
+            "Pre-commissioning spares: 200% gaskets and 10% bolts, nuts and washers for each size and type.",
+          ],
+        },
+      ],
+    });
+
+    add("Equipment schedule", {
+      paragraphs: [
+        `The offer covers ${totalQty} item(s) of pressure equipment, ${fmtInt(weight)} kg total shop weight, designed and manufactured at our Sitra workshop.`,
+      ],
+      table: equipmentTable,
+      note: "Weights are estimating-grade and exclude packing, transport saddles and loose internals.",
+    });
+
+    const rtEquipment = equipment.filter((e) => e.radiography && e.radiography !== "None");
+    const pwhtEquipment = equipment.filter((e) => e.pWHT === "Yes");
+    add("Inspection and test", {
+      bullets: [
+        "Raw materials are inspected before, during and after manufacture against the approved ITP.",
+        "ASME authorised inspector: yes. Third-party inspection by the client, where required, is carried out at the hold and witness points agreed in the ITP.",
+        "At Ramsis: visual inspection, dimensional measurement, hydrostatic test, non-destructive examination and welding procedure qualification records.",
+        rtEquipment.length
+          ? `Radiography: ${rtEquipment.map((e) => `${e.tag} — ${e.radiography}`).join("; ")}.`
+          : "Radiography is not included unless called for by the datasheet.",
+        pwhtEquipment.length
+          ? `Post-weld heat treatment is included for ${pwhtEquipment.map((e) => e.tag).join(", ")}.`
+          : "Post-weld heat treatment is not included in this offer.",
+      ],
+    });
+
+    add("Material certification", {
+      paragraphs: [
+        "Material certification for all pressure parts and parts directly welded to pressure parts is to EN 10204 type 3.1; where a type 3.1 certificate is not available, a type 3.2 certificate is produced.",
+        "Material certification for non-pressure parts is to EN 10204 type 2.2. Mill test certificates are made available to the client and the third-party inspector on request before fabrication starts.",
+      ],
+    });
+
+    add("Manufacturing location", {
+      paragraphs: [
+        `Ramsis Engineering, ${WORKSHOP.city}, Kingdom of ${WORKSHOP.country}. Port of loading: ${WORKSHOP.port}.`,
+        "Coordinates: 26.074806, 50.603434. Quality system to ISO 9001:2015.",
+      ],
+    });
+
+    add("Packing and transportation", {
+      bullets: [
+        "All parts are cleaned of loose scale, dirt and foreign material before packing and transportation.",
+        "Temporary transport bracing is supplied with the equipment for horizontal transport where required.",
+        "Vessels are nitrogen purged where specified, properly braced and secured to prevent damage in transit.",
+        "Packing, marking and preservation are to a seaworthy standard suitable for the quoted incoterm and destination.",
+      ],
+    });
+
+    add("Exclusions", {
+      paragraphs: ["The following are excluded from this offer unless expressly stated elsewhere:"],
+      bullets: [
+        "Third-party inspection (TPI) charges for raw material and fabricated items, where the client requires a nominated agency.",
+        "Cathodic protection.",
+        "Insulation and fireproofing (support clips are supplied and welded).",
+        "Supply of anchor bolts and foundation materials.",
+        "Any work at site, site assistance, installation, erection and commissioning.",
+        "Unloading, storage and preservation at site.",
+        "Statutory approvals and permits other than the ASME ‘U’ stamp registration.",
+      ],
+    });
+
+    add("General notes and clarifications", {
+      bullets: [
+        "This offer is based on the datasheet, drawings and RFQ documents issued for this enquiry; any change in scope or requirement has a commercial impact.",
+        `The offer is based on a total supply quantity of ${totalQty} item(s); a change in quantity has both delivery and price implications.`,
+        "The offer is based on the sizes and materials indicated on the datasheet. A higher material grade may be substituted on non-availability, with prior written approval.",
+        "All material is procured from the client-approved vendor list where one is specified.",
+        "Welding procedure qualification is to ASME Section IX; the quality system is to ISO 9001:2015.",
+        "Weights and dimensions are estimating-grade; final values are confirmed on approved fabrication drawings.",
+        "Items not expressly listed in the scope of supply are excluded.",
+        ...(settings.notes.trim() ? [settings.notes.trim()] : []),
+      ],
+    });
+
+    add("Delivery conditions", {
+      paragraphs: [`Delivery is ${settings.deliveryWeeks} weeks from purchase order acceptance and receipt of the final approved datasheet, subject to:`],
+      bullets: [
+        "Drawings and documents approved within one week of submission, electronically or by courier.",
+        "Removal of any engineering hold within two weeks of purchase order.",
+        "No hold on any activity — design, drawings, order placement, manufacturing or inspection — due to information pending from the client or end user.",
+        "No delay in approval of final documentation.",
+      ],
+    });
+
+    add("Defects liability / mechanical guarantee", {
+      paragraphs: [
+        `${settings.warrantyMonths} months from the date the plant is put into operation, or ${settings.warrantyExWeeks} months from ex-works ${WORKSHOP.city}, ${WORKSHOP.country} delivery, whichever is earlier.`,
+      ],
+    });
+  } else {
+    add("Scope summary", {
+      paragraphs: [
+        `The offer covers ${totalQty} item(s) of pressure equipment — ${tags} — designed, fabricated, tested, painted and packed at our ${WORKSHOP.city} workshop to ASME Section VIII Division 1, with the scope split shown in the matrix above.`,
+      ],
+      bullets: [
+        "Engineering: mechanical design calculations, fabrication drawings, ASME ‘U’ stamp certification.",
+        "Supply: material, fabrication, welding, NDE, hydro test, painting, internals and pre-commissioning spares.",
+        "Excluded: third-party inspection, insulation, fireproofing, anchor bolts and any site work.",
+      ],
+    });
+    add("Equipment schedule", { table: equipmentTable });
+  }
+
+  // ---- commercial -----------------------------------------------------------
+  if (settings.offerType !== "Technical") {
+    add("Price basis", {
+      paragraphs: [
+        priced
+          ? `Prices are in ${currency.name} (${currency.code}), ${logistics.incoterm === "EXW" ? `ex-works ${WORKSHOP.city}, ${WORKSHOP.country}` : `${logistics.incoterm} ${destinationOf(logistics.destination).name}`}, and exclude VAT.`
+          : "This is an unpriced commercial offer: prices are deliberately withheld so that the technical and commercial terms can be reviewed and agreed before the priced offer is issued.",
+        priced
+          ? "Prices are firm for the validity period of this offer and include design, material, fabrication, welding, testing, painting, packing and the documentation dossier."
+          : "The scope, schedule, payment terms and delivery basis below are binding on the priced offer that follows.",
+      ],
+      table: priceTable,
+      note: priced
+        ? `Amount in words: ${amountInWords(grand, currency)}.`
+        : "Prices, taxes and the amount in words are issued with the priced commercial offer.",
+    });
+
+    add("Payment schedule", {
+      paragraphs: [
+        `Payment terms are structured so that 100% of the material cost is recovered through material payments before fabrication starts. The material content of this price is ${money(material)} (${fmtNum(coverage.materialPct, 1)}% of the quoted value); material milestones 1–${payment.filter((p) => p.kind === "Material").length} total ${fmtNum(coverage.materialPaidPct, 1)}% of the price${priced ? ` — ${money(coverage.materialPaid)}` : ""}.`,
+        "All payments are released against the milestone evidence stated below; material payments are supported by unpriced purchase order copies and mill certificates.",
+      ],
+      table: paymentTable,
+      note: coverage.covered
+        ? "Material is fully funded by the material milestones — no material is carried by Ramsis into fabrication."
+        : "Warning: the material milestones do not yet cover the material content — increase the advance or the material release percentage.",
+    });
+
+    add("Payment period", { paragraphs: [`${settings.paymentDays} days from the date of invoice submission.`] });
+
+    add("Validity", {
+      paragraphs: [
+        `${settings.validityDays} days from the date of this offer (${dateText}). Prices and delivery are subject to re-confirmation after that date.`,
+      ],
+    });
+
+    add("Delivery", {
+      paragraphs: [
+        `${settings.deliveryWeeks} weeks from purchase order acceptance and receipt of the final approved datasheet, ${logistics.incoterm === "EXW" ? `ex-works ${WORKSHOP.city}, ${WORKSHOP.country}` : `${logistics.incoterm} ${destinationOf(logistics.destination).name}`}.`,
+        "Delivery is subject to drawing approval within one week of submission, removal of engineering holds within two weeks of purchase order, and no delay in the approval of final documentation.",
+      ],
+    });
+
+    add("Taxes and duties", {
+      paragraphs: [
+        "All prices exclude VAT. Import duty, customs clearance and any local taxes at the destination are to the client's account unless the quoted incoterm is DDP.",
+        `Prices are quoted in ${currency.name}; payment is in ${currency.code} unless otherwise agreed in the purchase order.`,
+      ],
+    });
+  }
+
+  // ---- cover letter ---------------------------------------------------------
+  const offerIntro = [
+    `Thank you again for considering Ramsis Engineering for ${subject} for ${endUserClean}.`,
+    `We have carefully reviewed the RFQ documents and completed our ${technical ? "mechanical design" : "preliminary review"} to identify the key material requirements for ${subject}${totalQty > 1 ? ` (${totalQty} nos.)` : " (1 no.)"}.`,
+    `This ${settings.offerType.toLowerCase()} offer sets out our scope, the split of responsibilities between the end user, the client and Ramsis, the delivery basis and${priced ? " our firm price" : " the commercial terms"}. It reflects our experience with comparable pressure equipment and a shop loading plan that accelerates material procurement and fabrication.`,
+    "We trust our offer meets your requirements. Should you require any further information or clarification, please do not hesitate to contact us.",
+  ];
+
+  return {
+    offerType: settings.offerType,
+    title:
+      settings.offerType === "Techno-Commercial"
+        ? "TECHNO - COMMERCIAL OFFER"
+        : settings.offerType === "Unpriced Commercial"
+          ? "UNPRICED COMMERCIAL OFFER"
+          : settings.offerType === "Technical"
+            ? "TECHNICAL OFFER"
+            : "COMMERCIAL OFFER",
+    subtitle: `${settings.offerNo} · Rev. ${settings.revision || "R0"} · ${dateText}`,
+    offerNo: settings.offerNo,
+    revision: settings.revision || "R0",
+    date: settings.date,
+    dateLabel: dateText,
+    attention: settings.attention,
+    client: clientName,
+    clientAddress: settings.clientAddress,
+    endUser: endUserName,
+    subject,
+    meta: [
+      { label: "Offer no.", value: `${settings.offerNo} Rev. ${settings.revision || "R0"}` },
+      { label: "Date", value: dateText },
+      { label: "Client (EPC)", value: clientName },
+      { label: "End user", value: endUserName },
+      { label: "Project", value: `${project.projectNo} — ${project.projectName}` },
+      { label: "Enquiry / RFQ", value: settings.enquiryRef || project.projectNo },
+      { label: "Scope", value: `${totalQty} item(s) · ${fmtInt(weight)} kg` },
+      { label: "Validity", value: `${settings.validityDays} days` },
+    ],
+    intro: offerIntro,
+    closing: ["Thanking you and assuring you of our best attention and service at all times.", "Yours faithfully,"],
+    signature: [
+      settings.preparedBy,
+      settings.preparedRole,
+      "Ramsis Engineering",
+      `Kingdom of ${WORKSHOP.country}`,
+      `Tel: ${settings.phone}`,
+      `Mob: ${settings.mobile}`,
+      `e-mail: ${settings.email}`,
+    ],
+    sections,
+    payment,
+    coverage,
+    priceRows,
+    totals: { material, exWorks, freight, grand, weight },
+    currency,
+    priced,
+    amountInWords: amountInWords(grand, currency),
+    scopeTable,
+  };
+}
+
+export const proposalFileName = (doc: ProposalDoc, ext: string) =>
+  `${doc.offerNo.replace(/[^\w-]+/g, "_")}_${doc.offerType.replace(/[^\w]+/g, "_")}_${doc.revision}.${ext}`;

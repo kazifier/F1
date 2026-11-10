@@ -6,6 +6,7 @@ import DesignPage from "./pages/Design";
 import BoqPage from "./pages/Boq";
 import DatasheetPage from "./pages/Datasheet";
 import IntakePage from "./pages/Intake";
+import ProposalPage from "./pages/Proposal";
 import WeldingPage from "./pages/Welding";
 import { useStore } from "./lib/store";
 import { CURRENCIES, FX_NOTE, VAT_BH } from "./lib/currency";
@@ -18,7 +19,8 @@ export type Route =
   | "boq"
   | "welding"
   | "datasheet"
-  | "intake";
+  | "intake"
+  | "proposal";
 
 const ROUTES: { key: Route; idx: string; label: string; title: string }[] = [
   { key: "project", idx: "00", label: "Project Scope", title: "6 columns · 25 vessels" },
@@ -29,6 +31,7 @@ const ROUTES: { key: Route; idx: string; label: string; title: string }[] = [
   { key: "welding", idx: "05", label: "Welding & Manhours", title: "WPS · layers · shop hours" },
   { key: "datasheet", idx: "06", label: "Datasheet Calc", title: "Thickness & nozzle check" },
   { key: "intake", idx: "07", label: "AI Doc Intake", title: "Read datasheets & drawings" },
+  { key: "proposal", idx: "08", label: "Proposal", title: "Technical · commercial · unpriced" },
 ];
 
 function readHash(): Route {
@@ -113,6 +116,7 @@ export default function App() {
           {route === "welding" && <WeldingPage />}
           {route === "datasheet" && <DatasheetPage />}
           {route === "intake" && <IntakePage />}
+          {route === "proposal" && <ProposalPage />}
         </div>
       </main>
     </div>

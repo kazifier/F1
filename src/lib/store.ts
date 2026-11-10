@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Equipment, LogisticsSettings, PartRow, ProjectInfo, RateBook } from "./types";
+import type {
+  Equipment,
+  LogisticsSettings,
+  PartRow,
+  ProjectInfo,
+  ProposalSettings,
+  RateBook,
+  ScopeParty,
+} from "./types";
 import { DEFAULT_RATES } from "./bom";
 import { PART_DEFS, PART_BY_KEY, defaultRow } from "./parts";
 import { applyHeaderDefaults } from "./autofill";
@@ -233,6 +241,8 @@ export interface AppState {
   rates: RateBook;
   /** cross-country procurement & delivery basis */
   logistics: LogisticsSettings;
+  /** offer preparation — parties, commercial basis and scope matrix */
+  proposal: ProposalSettings;
   /** BOQ line key → origin country selected for that part */
   sourcing: Record<string, string>;
   step: number;
@@ -266,6 +276,9 @@ export interface AppState {
   removeRow: (id: string, partKey: string, index: number) => void;
   setRates: (patch: Partial<RateBook>) => void;
   setLogistics: (patch: Partial<LogisticsSettings>) => void;
+  setProposal: (patch: Partial<ProposalSettings>) => void;
+  /** change one cell of the end user / client / Ramsis scope matrix */
+  setScopeCell: (rowId: string, party: ScopeParty, value: string) => void;
   /** choose the supply country for one BOQ line */
   setSourcing: (key: string, origin: string) => void;
   /** restore the default origin for every line */
@@ -286,6 +299,34 @@ const defaultProject: ProjectInfo = {
   revision: "R0",
 };
 
+const defaultProposal: ProposalSettings = {
+  offerType: "Techno-Commercial",
+  offerNo: "T-2026-0001",
+  revision: "R0",
+  date: new Date().toISOString().slice(0, 10),
+  attention: "Manager – Procurement Department",
+  client: "",
+  clientAddress: "",
+  endUser: "",
+  subject: "",
+  enquiryRef: "",
+  validityDays: 30,
+  deliveryWeeks: 40,
+  paymentDays: 30,
+  advancePct: 20,
+  materialPoPct: 30,
+  retentionPct: 5,
+  warrantyMonths: 12,
+  warrantyExWeeks: 18,
+  preparedBy: "Adi Krishna K",
+  preparedRole: "Proposal Manager",
+  phone: "+973 1783 0801",
+  mobile: "+973 3960 0458",
+  email: "adi.krishna@ramsis.com.bh",
+  scope: {},
+  notes: "",
+};
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -293,6 +334,7 @@ export const useStore = create<AppState>()(
       equipment: [seedTank(), seedColumn(), seedExchanger()],
       rates: DEFAULT_RATES,
       logistics: { ...DEFAULT_LOGISTICS },
+      proposal: { ...defaultProposal },
       sourcing: {},
       step: 1,
       activeEquipmentId: null,
@@ -424,6 +466,9 @@ export const useStore = create<AppState>()(
         }),
       setRates: (patch) => set({ rates: { ...get().rates, ...patch } }),
       setLogistics: (patch) => set({ logistics: { ...get().logistics, ...patch } }),
+      setProposal: (patch) => set({ proposal: { ...get().proposal, ...patch } }),
+      setScopeCell: (rowId, party, value) =>
+        set({ proposal: { ...get().proposal, scope: { ...get().proposal.scope, [`${rowId}|${party}`]: value } } }),
       setSourcing: (key, origin) => set({ sourcing: { ...get().sourcing, [key]: origin } }),
       clearSourcing: () => set({ sourcing: {} }),
       resetAll: () =>
@@ -432,6 +477,7 @@ export const useStore = create<AppState>()(
           equipment: [],
           rates: DEFAULT_RATES,
           logistics: { ...DEFAULT_LOGISTICS },
+      proposal: { ...defaultProposal },
           sourcing: {},
           step: 1,
           activeEquipmentId: null,
@@ -442,6 +488,7 @@ export const useStore = create<AppState>()(
           equipment: [seedTank(), seedColumn(), seedExchanger()],
           rates: DEFAULT_RATES,
           logistics: { ...DEFAULT_LOGISTICS },
+      proposal: { ...defaultProposal },
           sourcing: {},
           step: 1,
           activeEquipmentId: null,
@@ -449,9 +496,14 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "vessel-estimator-v1",
-      version: 6,
+      version: 7,
       migrate: (persisted: unknown, version: number) => {
         const s = persisted as { equipment?: Equipment[] } & Record<string, unknown>;
+        // v7: proposal preparation settings
+        if (version < 7) {
+          const st = s as { proposal?: ProposalSettings };
+          st.proposal = { ...defaultProposal, ...(st.proposal ?? {}) };
+        }
         // v3: rate book moved from INR benchmarks to BHD, currency is now a display setting
         // v6: the workshop is in Bahrain, so Bahrain is the default supply country
         if (version < 6) {

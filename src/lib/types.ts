@@ -188,6 +188,50 @@ export interface WeldSettings {
   fitUp: number;
 }
 
+// ---------------------------------------------------------------------------
+export type OfferType = "Techno-Commercial" | "Technical" | "Commercial" | "Unpriced Commercial";
+
+export type ScopeParty = "endUser" | "client" | "ramsis";
+
+/**
+ * Proposal preparation settings. The offer is generated from the estimate, so
+ * this only holds what cannot be derived: the parties, the offer number and the
+ * commercial basis the estimator wants to quote.
+ */
+export interface ProposalSettings {
+  offerType: OfferType;
+  offerNo: string;
+  revision: string;
+  date: string;
+  /** "Kind Attn. …" line */
+  attention: string;
+  /** client is the EPC that issues the purchase order */
+  client: string;
+  clientAddress: string;
+  /** end user is the plant owner where the equipment is installed */
+  endUser: string;
+  subject: string;
+  enquiryRef: string;
+  validityDays: number;
+  deliveryWeeks: number;
+  paymentDays: number;
+  advancePct: number;
+  /** payment released on issue of the raw-material purchase orders */
+  materialPoPct: number;
+  retentionPct: number;
+  warrantyMonths: number;
+  warrantyExWeeks: number;
+  preparedBy: string;
+  preparedRole: string;
+  phone: string;
+  mobile: string;
+  email: string;
+  /** scope matrix overrides, key `${rowId}|${party}` */
+  scope: Record<string, string>;
+  /** free text printed under general notes */
+  notes: string;
+}
+
 export interface DatasheetInputs {
   tag: string;
   orientation: string; // Vertical / Horizontal
