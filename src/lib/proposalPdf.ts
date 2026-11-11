@@ -85,22 +85,39 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
     const padY = 4.5;
     const size = 7.7;
     const lead = size * 1.32;
+    const subSize = 6.9;
+    const subLead = subSize * 1.32;
+    const barH = 7;
 
     const linesIn = (cells: string[], bold: boolean) => {
       pdf.setFont("helvetica", bold ? "bold" : "normal");
       pdf.setFontSize(size);
       return cells.map((c, i) => pdf.splitTextToSize(c || " ", cols[i] - padX * 2) as string[]);
     };
-    const rowHeight = (cells: string[], bold: boolean) => {
+    const subLinesIn = (r: number) => {
+      const sub = t.sub?.[r];
+      if (!sub) return null;
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(subSize);
+      return sub.map((s, i) => (s ? (pdf.splitTextToSize(s, cols[i] - padX * 2) as string[]) : []));
+    };
+    const barOf = (r: number) => (t.barColumn !== undefined ? t.bars?.[r] : undefined);
+
+    const rowHeight = (cells: string[], bold: boolean, r: number) => {
       const lines = linesIn(cells, bold);
-      return Math.max(...lines.map((l) => l.length)) * lead + padY * 2;
+      const sub = subLinesIn(r);
+      const mainH = Math.max(...lines.map((l) => l.length)) * lead;
+      const subH = sub ? Math.max(...sub.map((l) => l.length)) * subLead : 0;
+      return mainH + subH + (barOf(r) ? barH + 4 : 0) + padY * 2;
     };
 
-    const drawRow = (cells: string[], bold: boolean, fill?: Rgb, textColor: Rgb = INK) => {
-      const h = rowHeight(cells, bold);
+    const drawRow = (cells: string[], bold: boolean, fill?: Rgb, textColor: Rgb = INK, r = -1) => {
+      const h = rowHeight(cells, bold, r);
       const lines = linesIn(cells, bold);
+      const sub = subLinesIn(r);
       let x = MARGIN;
       cells.forEach((_, i) => {
+        const cellX = x;
         if (fill) {
           pdf.setFillColor(...fill);
           pdf.rect(x, y, cols[i], h, "F");
@@ -108,12 +125,33 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
         pdf.setDrawColor(...RULE);
         pdf.setLineWidth(0.5);
         pdf.rect(x, y, cols[i], h, "S");
+
+        const bar = barOf(r);
+        if (i === t.barColumn && bar) {
+          const total = t.barTotal ?? 1;
+          const usable = cols[i] - padX * 2;
+          pdf.setFillColor(...ACCENT);
+          pdf.rect(cellX + padX + (bar.start / total) * usable, y + h / 2 - barH / 2, Math.max(2, (bar.days / total) * usable), barH, "F");
+          x += cols[i];
+          return;
+        }
+
         pdf.setTextColor(...textColor);
         const align = t.align?.[i] ?? "left";
         const tx = align === "right" ? x + cols[i] - padX : align === "center" ? x + cols[i] / 2 : x + padX;
         lines[i].slice(0, 5).forEach((line, li) => {
           pdf.text(line, tx, y + padY + size + li * lead, { align });
         });
+        if (sub?.[i]?.length) {
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(subSize);
+          pdf.setTextColor(...MUTED);
+          const subTop = y + padY + size + Math.max(lines[i].length, 1) * lead;
+          sub[i].slice(0, 7).forEach((line, li) => {
+            pdf.text(line, cellX + padX, subTop + li * subLead);
+          });
+          pdf.setFontSize(size);
+        }
         x += cols[i];
       });
       y += h;
@@ -143,12 +181,12 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
         y += 17;
       }
       const isTotal = !!opts.emphasiseLast && i === t.rows.length - 1;
-      const h = rowHeight(row, isTotal);
+      const h = rowHeight(row, isTotal, i);
       if (y + h > PAGE_H - BOTTOM) {
         newPage();
         drawHead();
       }
-      drawRow(row, isTotal, isTotal ? ACCENT_SOFT : i % 2 === 1 ? ZEBRA : undefined, isTotal ? ACCENT : INK);
+      drawRow(row, isTotal, isTotal ? ACCENT_SOFT : i % 2 === 1 ? ZEBRA : undefined, isTotal ? ACCENT : INK, i);
     });
     y += 9;
   };

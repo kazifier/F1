@@ -164,15 +164,20 @@ function tableXml(t: DocTable, o: { striped?: boolean; emphasisLast?: boolean } 
       const totalRow = o.emphasisLast && r === lastIndex;
       const shade = totalRow ? ACCENT_SOFT : o.striped && r % 2 === 1 ? ZEBRA : undefined;
       return `${band ? bandRow(band.title) : ""}<w:tr><w:trPr><w:cantSplit/></w:trPr>${row
-        .map((c, i) =>
-          cellBlocks([{ text: c, bold: totalRow, size: totalRow ? 9 : 8.5, color: totalRow ? ACCENT : INK, after: 0 }], cols[i], {
+        .map((c, i) => {
+          const sub = t.sub?.[r]?.[i];
+          const blocks: Block[] = [
+            { text: c, bold: totalRow, size: totalRow ? 9 : 8.5, color: totalRow ? ACCENT : INK, after: sub ? 26 : 0 },
+          ];
+          if (sub) blocks.push({ text: sub, size: 7, color: MUTED, after: 0 });
+          return cellBlocks(blocks, cols[i], {
             shade,
             align: t.align?.[i],
             borders: totalRow
               ? `<w:tcBorders><w:top w:val="single" w:sz="8" w:color="${RULE_DARK}"/><w:bottom w:val="single" w:sz="4" w:color="${RULE}"/><w:left w:val="single" w:sz="4" w:color="${RULE}"/><w:right w:val="single" w:sz="4" w:color="${RULE}"/></w:tcBorders>`
               : undefined,
-          }),
-        )
+          });
+        })
         .join("")}</w:tr>`;
     })
     .join("");

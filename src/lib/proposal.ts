@@ -67,7 +67,15 @@ export interface ScopeRowDef {
  * pressure testing, heat treatment, painting, internals, code stamp and third-party
  * inspection) are carried once, under the party that actually executes them.
  */
-export const SCOPE_ROWS: ScopeRowDef[] = [
+/** scope definitions — ordered for reading by SCOPE_SEQUENCE below */
+const SCOPE_DEFS: ScopeRowDef[] = [
+  {
+    id: "process",
+    group: "design",
+    item: "Process design and datasheet",
+    basis: "Process and thermal design basis, equipment datasheet and the guarantee figures issued for approval.",
+    defaults: { endUser: "I", client: "A", ramsis: "R" },
+  },
   {
     id: "design",
     group: "design",
@@ -284,6 +292,53 @@ export const SCOPE_ROWS: ScopeRowDef[] = [
   },
 ];
 
+/**
+ * The order the matrix is printed in: the sequence in which the work actually
+ * happens on the shop route, from process design through to dispatch, followed
+ * by the shop-level block.
+ */
+const SCOPE_SEQUENCE = [
+  "process",
+  "design",
+  "drawings",
+  "itp",
+  "pm",
+  "material",
+  "fabrication",
+  "welding",
+  "lugs",
+  "saddles",
+  "internals",
+  "nde",
+  "pwht",
+  "hydro",
+  "special",
+  "painting",
+  "nameplate",
+  "nitrogen",
+  "stamp",
+  "tpi",
+  "mdr",
+  "spares",
+  "asbuilt",
+  "packing",
+  "transport",
+  "site",
+  "lifting",
+  "fabeng",
+  "cladding",
+  "supports",
+  "consumables",
+  "traceqc",
+  "preservation",
+];
+
+export const SCOPE_ROWS: ScopeRowDef[] = SCOPE_SEQUENCE.map((id) => {
+  const row = SCOPE_DEFS.find((r) => r.id === id);
+  if (!row) throw new Error(`scope row ${id} is missing from SCOPE_DEFS`);
+  return row;
+});
+
 export const scopeMark = (settings: ProposalSettings, row: ScopeRowDef, party: ScopeParty): ScopeMark => {
   const set = settings.scope?.[`${row.id}|${party}`];
   return (set as ScopeMark) || row.defaults[party];
@@ -302,6 +357,12 @@ export interface DocTable {
   emphasiseLast?: boolean;
   /** full-width band rows inserted before the given row index */
   bands?: { before: number; title: string }[];
+  /** secondary text printed under a cell in a smaller muted face */
+  sub?: (string | undefined)[][];
+  /** programme bars, one per row, drawn inside the bar column */
+  bars?: { start: number; days: number }[];
+  barTotal?: number;
+  barColumn?: number;
 }
 
 export interface DocSubsection {
@@ -351,6 +412,25 @@ export interface PriceRow {
   kind: "equipment" | "freight";
 }
 
+export interface PlanActivity {
+  seq: number;
+  code: string;
+  activity: string;
+  days: number;
+  startDay: number;
+  finishDay: number;
+  startWeek: number;
+  finishWeek: number;
+}
+
+export interface ManufacturingPlan {
+  activities: PlanActivity[];
+  totalDays: number;
+  deliveryDays: number;
+  deliveryWeeks: number;
+  pwht: boolean;
+}
+
 export interface ProposalDoc {
   offerType: ProposalSettings["offerType"];
   title: string;
@@ -374,6 +454,7 @@ export interface ProposalDoc {
   deliveryWeeks: number;
   validityDays: number;
   priceRows: PriceRow[];
+  plan: ManufacturingPlan;
   totals: { material: number; exWorks: number; freight: number; grand: number; weight: number };
   currency: CurrencyDef;
   priced: boolean;
@@ -545,6 +626,56 @@ function buildPayment(
 }
 
 // ---------------------------------------------------------------------------
+// Manufacturing schedule — the shop route after purchase order receipt
+// ---------------------------------------------------------------------------
+/** Condensed from the twelve-line house plan: PWHT folds into NDE, packing into dispatch. */
+const PLAN_ROUTE: { code: string; activity: string; days: number }[] = [
+  { code: "ENG", activity: "Engineering, datasheet and design approval", days: 12 },
+  { code: "PROC", activity: "Material procurement — plate and forging mill lead time", days: 54.5 },
+  { code: "RECV", activity: "Material receipt, PMI, marking and traceability", days: 5 },
+  { code: "CUT", activity: "Nesting, cutting, edge preparation and rolling", days: 11 },
+  { code: "FIT", activity: "Fit-up of courses, heads, nozzles and internals", days: 12.5 },
+  { code: "WELD", activity: "Welding to the approved WPS / PQR", days: 25 },
+  { code: "NDE", activity: "Non-destructive examination, dimensional check and PWHT", days: 9.5 },
+  { code: "HYDRO", activity: "Hydrostatic test, post-test NDE and drying", days: 4 },
+  { code: "FIN", activity: "Painting, nameplate, documentation, preservation, packing and dispatch", days: 8 },
+  { code: "BUFF", activity: "Contingency buffer", days: 14.5 },
+];
+
+/**
+ * The route runs from purchase order receipt to dispatch and is scaled to the
+ * quoted delivery, so the last line is the contingency the programme actually has.
+ */
+export function buildManufacturingPlan(settings: ProposalSettings, pwht: boolean): ManufacturingPlan {
+  const route = PLAN_ROUTE.map((a) => (a.code === "NDE" && pwht ? { ...a, days: a.days + 3 } : a));
+  const base = route.reduce((sum, a) => sum + a.days, 0) || 1;
+  const deliveryWeeks =
+    Number.isFinite(settings.deliveryWeeks) && settings.deliveryWeeks > 0 ? settings.deliveryWeeks : 40;
+  const deliveryDays = deliveryWeeks * 7;
+  const scale = deliveryDays / base;
+  const round = (v: number) => Math.round(v * 2) / 2;
+
+  let cursor = 0;
+  const activities = route.map((a, i) => {
+    const days = round(a.days * scale);
+    const startDay = cursor;
+    cursor = round(cursor + days);
+    return {
+      seq: i + 1,
+      code: a.code,
+      activity: a.activity,
+      days,
+      startDay,
+      finishDay: cursor,
+      startWeek: Math.floor(startDay / 7) + 1,
+      finishWeek: Math.max(Math.floor(startDay / 7) + 1, Math.ceil(cursor / 7)),
+    };
+  });
+
+  return { activities, totalDays: cursor, deliveryDays, deliveryWeeks, pwht };
+}
+
+// ---------------------------------------------------------------------------
 // Main builder
 // ---------------------------------------------------------------------------
 export function buildProposal(input: ProposalInput): ProposalDoc {
@@ -591,6 +722,8 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const grand = exWorks + freight;
   const priced = settings.offerType !== "Unpriced Commercial" && settings.offerType !== "Technical";
   const { payment, coverage } = buildPayment(settings, material, grand);
+  const pwhtRequired = equipment.some((e) => e.pWHT === "Yes");
+  const plan = buildManufacturingPlan(settings, pwhtRequired);
 
   const clientName = settings.client.trim() || project.client;
   const endUserName = settings.endUser.trim() || project.client;
@@ -611,15 +744,16 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     }
   });
 
+  // the basis or limit sits under the item, in the same column, in a smaller face
   const scopeTable: DocTable = {
-    head: ["#", "Scope item", "Basis or limit", "End user", "Client (EPC)", "Ramsis"],
-    widths: [0.4, 3.4, 3.5, 0.65, 0.8, 0.65],
-    align: ["center", "left", "left", "center", "center", "center"],
+    head: ["#", "Scope item", "End user", "Client (EPC)", "Ramsis"],
+    widths: [0.4, 7.2, 0.7, 0.85, 0.7],
+    align: ["center", "left", "center", "center", "center"],
     bands: scopeBands,
+    sub: SCOPE_ROWS.map((row) => [undefined, row.basis, undefined, undefined, undefined]),
     rows: SCOPE_ROWS.map((row, i) => [
       String(i + 1),
       row.item,
-      row.basis ?? "",
       scopeMark(settings, row, "endUser"),
       scopeMark(settings, row, "client"),
       scopeMark(settings, row, "ramsis"),
@@ -717,6 +851,21 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     ],
   };
 
+  const planTable: DocTable = {
+    head: ["#", "Activity", "Weeks from PO", "Days"],
+    widths: [0.4, 5.2, 2.1, 0.9],
+    align: ["center", "left", "center", "right"],
+    rows: plan.activities.map((a) => [
+      String(a.seq),
+      a.activity,
+      a.startWeek === a.finishWeek ? `W${a.startWeek}` : `W${a.startWeek} – W${a.finishWeek}`,
+      fmtNum(a.days, 1),
+    ]),
+    bars: plan.activities.map((a) => ({ start: a.startDay, days: a.days })),
+    barTotal: plan.totalDays,
+    barColumn: 2,
+  };
+
   // ---- sections -------------------------------------------------------------
   const sections: DocSection[] = [];
   let no = 0;
@@ -741,12 +890,22 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     table: scopeTable,
     paragraphs: [
       "The matrix fixes who does what between the three parties to this offer. The end user owns the plant and is the ultimate approver of the equipment specification; the client (EPC) issues the purchase order and administers the contract; Ramsis Engineering designs, manufactures, tests and delivers the equipment.",
-      "Process design and guarantees are carried in full by Ramsis. Fabrication engineering and shop-level scope retained by the client or its nominated fabricator are listed separately, each with the basis or limit that applies, so no line is claimed twice.",
+      "The lines run in the order the work happens — process design and datasheet, engineering, procurement, fabrication, inspection and testing, finishing, then dispatch. Process design and guarantees are carried in full by Ramsis; fabrication engineering and shop-level scope retained by the client or its nominated fabricator are listed separately. Each line carries its basis or limit beneath it, so no line is claimed twice.",
       "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
     ],
   });
 
   if (technical) {
+    add("Manufacturing schedule after receipt of PO", {
+      paragraphs: [
+        `The shop route below covers ${totalQty} item(s), from purchase order receipt to dispatch, and is scaled to the ${plan.deliveryWeeks}-week delivery quoted. Stages follow one another, with planned overlap absorbed inside each stage.`,
+      ],
+      table: planTable,
+      note: plan.pwht
+        ? "PWHT is included and sits inside the NDE stage; pushing or removing it from the furnace shifts the hydrostatic test, painting and dispatch by three days."
+        : "PWHT is not required for this scope; if it is added, the NDE stage grows by three days and the hydrostatic test, painting and dispatch shift by three days.",
+    });
+
     add("Scope of work and supply", {
       subsections: [
         {
@@ -996,6 +1155,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     deliveryWeeks: settings.deliveryWeeks,
     validityDays: settings.validityDays,
     priceRows,
+    plan,
     totals: { material, exWorks, freight, grand, weight },
     currency,
     priced,

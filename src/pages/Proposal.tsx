@@ -170,16 +170,66 @@ export default function ProposalPage() {
 
       <div className="card">
         <div className="card-head">
-          <h3>Scope matrix — end user, client and Ramsis</h3>
-          <span className="hint">two blocks · basis or limit per line · R / A / C / I / “-”</span>
+          <h3>Manufacturing schedule after receipt of PO</h3>
+          <span className="hint">
+            {doc.plan.deliveryWeeks} weeks · {doc.plan.activities.length} stages · {doc.plan.pwht ? "PWHT included" : "no PWHT"}
+          </span>
         </div>
         <div className="card-body tight scroll-x">
-          <table className="data" style={{ minWidth: 940 }}>
+          <table className="data" style={{ minWidth: 720 }}>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Activity</th>
+                <th style={{ width: "44%" }}>Week from PO</th>
+                <th className="num">Days</th>
+              </tr>
+            </thead>
+            <tbody>
+              {doc.plan.activities.map((a) => (
+                <tr key={a.code}>
+                  <td className="num">{a.seq}</td>
+                  <td>{a.activity}</td>
+                  <td>
+                    <div style={{ position: "relative", height: 14, background: "#f3f1f1", borderRadius: 3 }}>
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${(a.startDay / doc.plan.totalDays) * 100}%`,
+                          width: `${Math.max(1.5, (a.days / doc.plan.totalDays) * 100)}%`,
+                          top: 2,
+                          bottom: 2,
+                          background: a.code === "BUFF" ? "#c8a6a6" : "#8b1e1e",
+                          borderRadius: 2,
+                        }}
+                      />
+                    </div>
+                  </td>
+                  <td className="num">{a.days.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="est-note">
+          Runs from purchase order receipt to dispatch, scaled to the {doc.plan.deliveryWeeks}-week delivery quoted
+          (W1 = first week after PO). Stages follow one another and absorb planned overlap inside each stage. The last
+          line is the contingency the programme actually has; PWHT is folded into the NDE stage and is included only
+          where the datasheet requires it. Printed in the offer as its own section for client submission.
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h3>Scope matrix — end user, client and Ramsis</h3>
+          <span className="hint">two blocks · in shop-route order · basis under each line · R / A / C / I / “-”</span>
+        </div>
+        <div className="card-body tight scroll-x">
+          <table className="data" style={{ minWidth: 760 }}>
             <thead>
               <tr>
                 <th>#</th>
                 <th>Scope item</th>
-                <th>Basis or limit</th>
                 {PARTIES.map((p) => <th key={p.party} className="num">{p.label}</th>)}
               </tr>
             </thead>
@@ -192,7 +242,7 @@ export default function ProposalPage() {
                     {startsGroup && (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={5}
                           style={{
                             background: "#f6eded",
                             color: "#8b1e1e",
@@ -209,8 +259,14 @@ export default function ProposalPage() {
                     )}
                     <tr>
                       <td className="num">{i + 1}</td>
-                      <td>{row.item}</td>
-                      <td style={{ fontSize: 11.5, color: "#667080", maxWidth: 380 }}>{row.basis ?? "—"}</td>
+                      <td>
+                        {row.item}
+                        {row.basis && (
+                          <div style={{ fontSize: 11, color: "#667080", marginTop: 2, lineHeight: 1.35 }}>
+                            {row.basis}
+                          </div>
+                        )}
+                      </td>
                       {PARTIES.map((p) => (
                         <td key={p.party} className="num">
                           <select
@@ -232,11 +288,10 @@ export default function ProposalPage() {
           </table>
         </div>
         <div className="est-note">
-          Process design and guarantees are Ramsis scope; fabrication engineering and shop-level work are stated
-          separately with their limits. Each line appears once — the duplicated NDE / pressure-test, heat-treatment,
-          painting, internals and code-stamp rows of the old matrix are merged, and every basis or exclusion is printed
-          in the offer. The end user is the plant owner, the client is the EPC that issues the purchase order, and
-          Ramsis designs, manufactures, tests and delivers.
+          Lines follow the sequence of the work itself — process design and datasheet first, then engineering,
+          procurement, fabrication, inspection and testing, finishing and dispatch. The basis or limit is printed under
+          each line in the offer, so each activity is claimed once. The end user is the plant owner, the client is the
+          EPC that issues the purchase order, and Ramsis designs, manufactures, tests and delivers.
         </div>
       </div>
 
