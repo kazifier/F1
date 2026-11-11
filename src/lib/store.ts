@@ -316,11 +316,11 @@ const defaultProposal: ProposalSettings = {
   retentionPct: 0,
   warrantyMonths: 12,
   warrantyExWeeks: 18,
-  preparedBy: "Adi Krishna K",
+  preparedBy: "Farhan Kazi",
   preparedRole: "Proposal Manager",
   phone: "+973 1783 0801",
   mobile: "+973 3960 0458",
-  email: "adi.krishna@ramsis.com.bh",
+  email: "farhan.kazi@ramsis.com.bh",
   scope: {},
   notes: "",
 };
@@ -494,7 +494,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "vessel-estimator-v1",
-      version: 9,
+      version: 10,
       migrate: (persisted: unknown, version: number) => {
         const s = persisted as { equipment?: Equipment[] } & Record<string, unknown>;
         // v7: proposal preparation settings
@@ -517,6 +517,14 @@ export const useStore = create<AppState>()(
           delete merged.designPct;
           delete merged.materialPoPct;
           st.proposal = merged as unknown as ProposalSettings;
+        }
+        // v10: the proposal manager is Farhan Kazi
+        if (version < 10) {
+          const st = s as { proposal?: Partial<ProposalSettings> };
+          const merged = { ...defaultProposal, ...(st.proposal ?? {}) };
+          if (merged.preparedBy === "Adi Krishna K") merged.preparedBy = defaultProposal.preparedBy;
+          if (merged.email === "adi.krishna@ramsis.com.bh") merged.email = defaultProposal.email;
+          st.proposal = merged;
         }
         // v3: rate book moved from INR benchmarks to BHD, currency is now a display setting
         // v6: the workshop is in Bahrain, so Bahrain is the default supply country

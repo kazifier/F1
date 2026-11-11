@@ -882,14 +882,14 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     });
   }
 
-  add("Scope matrix — end user, client and Ramsis", {
-    table: scopeTable,
-    paragraphs: [
-      "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
-    ],
-  });
-
   if (technical) {
+    add("Scope matrix — end user, client and Ramsis", {
+      table: scopeTable,
+      paragraphs: [
+        "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
+      ],
+    });
+
     add("Manufacturing schedule after receipt of PO", {
       paragraphs: [
         `The shop route below covers ${totalQty} item(s), from purchase order receipt to dispatch, and is scaled to the ${plan.deliveryWeeks}-week delivery quoted. Stages follow one another, with planned overlap absorbed inside each stage.`,
@@ -972,18 +972,6 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
         `${settings.warrantyMonths} months from the date the plant is put into operation, or ${settings.warrantyExWeeks} months from ex-works ${WORKSHOP.city}, ${WORKSHOP.country} delivery, whichever is earlier.`,
       ],
     });
-  } else {
-    add("Scope summary", {
-      paragraphs: [
-        `The offer covers ${totalQty} item(s) of pressure equipment — ${tags} — designed, fabricated, tested, painted and packed at our ${WORKSHOP.city} workshop to ASME Section VIII Division 1, with the scope split shown in the matrix above.`,
-      ],
-      bullets: [
-        "Engineering: mechanical design calculations, fabrication drawings, ASME ‘U’ stamp certification.",
-        "Supply: material, fabrication, welding, NDE, hydro test, painting, internals and pre-commissioning spares.",
-        "Excluded: third-party inspection, insulation, fireproofing, anchor bolts and any site work.",
-      ],
-    });
-    add("Equipment schedule", { table: equipmentTable });
   }
 
   // ---- commercial -----------------------------------------------------------
@@ -1043,7 +1031,9 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const offerIntro = [
     `Thank you again for considering Ramsis Engineering for ${subject} for ${endUserClean}.`,
     `We have carefully reviewed the RFQ documents and completed our ${technical ? "mechanical design" : "preliminary review"} to identify the key material requirements for ${subject}${totalQty > 1 ? ` (${totalQty} nos.)` : " (1 no.)"}.`,
-    `This ${settings.offerType.toLowerCase()} offer sets out our scope, the split of responsibilities between the end user, the client and Ramsis, the delivery basis and${priced ? " our firm price" : " the commercial terms"}. It reflects our experience with comparable pressure equipment and a shop loading plan that accelerates material procurement and fabrication.`,
+    technical
+      ? `This ${settings.offerType.toLowerCase()} offer sets out our scope, the split of responsibilities between the end user, the client and Ramsis, the delivery basis and${priced ? " our firm price" : " the commercial terms"}. It reflects our experience with comparable pressure equipment and a shop loading plan that accelerates material procurement and fabrication.`
+      : `This ${settings.offerType.toLowerCase()} offer carries the commercial terms — price basis, payment milestones, validity and delivery — for the equipment covered by our technical offer, and is issued separately for clients who prefer the two halves apart.`,
     "We trust our offer meets your requirements. Should you require any further information or clarification, please do not hesitate to contact us.",
   ];
 
