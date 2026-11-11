@@ -8,7 +8,7 @@ import type { OfferType, ScopeParty } from "../lib/types";
 const OFFER_TYPES: OfferType[] = ["Techno-Commercial", "Technical", "Commercial", "Unpriced Commercial"];
 const PARTIES: { party: ScopeParty; label: string }[] = [
   { party: "endUser", label: "End user" },
-  { party: "client", label: "Client (EPC)" },
+  { party: "client", label: "Client" },
   { party: "ramsis", label: "Ramsis" },
 ];
 
@@ -187,7 +187,7 @@ export default function ProposalPage() {
                 <th>#</th>
                 <th>Activity</th>
                 <th style={{ width: "44%" }}>Week from PO</th>
-                <th className="num">Days</th>
+                <th className="num">Weeks</th>
               </tr>
             </thead>
             <tbody>
@@ -210,7 +210,7 @@ export default function ProposalPage() {
                       />
                     </div>
                   </td>
-                  <td className="num">{a.days.toFixed(1)}</td>
+                  <td className="num">{(a.days / 7).toFixed(1)}</td>
                 </tr>
               ))}
             </tbody>

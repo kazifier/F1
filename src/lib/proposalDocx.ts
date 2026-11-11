@@ -15,7 +15,6 @@ import { proposalFileName } from "./proposal";
 
 const ACCENT = "8B1E1E";
 const ACCENT_SOFT = "F6EDED";
-const CARD = "F7F5F5";
 const ZEBRA = "FBF9F9";
 const INK = "1F2328";
 const MUTED = "667080";
@@ -189,41 +188,6 @@ function tableXml(t: DocTable, o: { striped?: boolean; emphasisLast?: boolean } 
   );
 }
 
-/** three-across strip of label + value cards */
-function statStrip(stats: { label: string; value: string }[]): string {
-  const w = Math.round(USABLE / stats.length);
-  const cells = stats
-    .map((s) =>
-      cellBlocks(
-        [
-          { text: s.label, size: 7.5, color: MUTED, caps: true, tracking: 20, after: 30 },
-          { text: s.value, size: 12, bold: true, color: ACCENT, after: 0 },
-        ],
-        w,
-        {
-          shade: CARD,
-          borders: `<w:tcBorders><w:top w:val="single" w:sz="4" w:color="${RULE}"/><w:bottom w:val="single" w:sz="4" w:color="${RULE}"/><w:left w:val="single" w:sz="4" w:color="${RULE}"/><w:right w:val="single" w:sz="4" w:color="${RULE}"/></w:tcBorders>`,
-        },
-      ),
-    )
-    .join("");
-  return (
-    `<w:tbl><w:tblPr><w:tblW w:w="${USABLE}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblBorders>${[
-      "top",
-      "left",
-      "bottom",
-      "right",
-      "insideH",
-      "insideV",
-    ]
-      .map((s) => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="${RULE}"/>`)
-      .join("")}</w:tblBorders></w:tblPr><w:tblGrid>${stats
-      .map(() => `<w:gridCol w:w="${w}"/>`)
-      .join("")}</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>${cells}</w:tr></w:tbl>` +
-    para("", { after: 120, size: 2 })
-  );
-}
-
 /** the dark title band at the top of the body page */
 function titleBand(title: string, subtitle: string): string {
   return (
@@ -260,9 +224,50 @@ function heading(section: DocSection): string {
   );
 }
 
+/** opens a part of the offer: a fresh page and a part heading */
+function partXml(part: string): string {
+  return (
+    para(part, {
+      bold: true,
+      size: 18,
+      color: ACCENT,
+      before: 0,
+      after: 40,
+      pageBreakBefore: true,
+      caps: true,
+      tracking: 40,
+    }) + para("", { after: 0, rule: true })
+  );
+}
+
 function sectionXml(section: DocSection): string {
-  const out: string[] = [heading(section)];
+  const out: string[] = [];
+  if (section.part) out.push(partXml(section.part));
+  out.push(heading(section));
   for (const p of section.paragraphs ?? []) out.push(para(p, { size: 10, align: "justify", after: 120 }));
+  let itemNo = 0;
+  for (const item of section.items ?? []) {
+    itemNo += 1;
+    out.push(
+      para(`${itemNo}.  ${item.text}`, {
+        bold: true,
+        size: 10,
+        color: ACCENT,
+        before: 140,
+        after: 60,
+        keepNext: true,
+      }),
+    );
+    let subNo = 0;
+    for (const sub of item.subs ?? []) {
+      subNo += 1;
+      out.push(
+        `<w:p><w:pPr><w:spacing w:before="0" w:after="60" w:line="264" w:lineRule="auto"/><w:ind w:left="600" w:hanging="360"/><w:jc w:val="both"/></w:pPr>` +
+          `${run(`${itemNo}.${subNo}`, { size: 10, bold: true, color: ACCENT })}` +
+          `${run("    " + sub, { size: 10 })}</w:p>`,
+      );
+    }
+  }
   for (const b of section.bullets ?? [])
     out.push(
       `<w:p><w:pPr><w:spacing w:before="0" w:after="70" w:line="264" w:lineRule="auto"/><w:ind w:left="320" w:hanging="200"/><w:jc w:val="both"/></w:pPr>` +
@@ -326,17 +331,6 @@ function buildDocument(doc: ProposalDoc): string {
       "Sitra, Kingdom of Bahrain",
       "Design · fabrication · supply",
     )}</w:tr></w:tbl>` + para("", { after: 160, size: 2 }),
-  );
-
-  out.push(
-    statStrip([
-      {
-        label: "Quoted value",
-        value: doc.priced ? `${doc.currency.code} ${Math.round(doc.totals.grand).toLocaleString("en-US")}` : "Unpriced",
-      },
-      { label: "Delivery", value: `${doc.deliveryWeeks} weeks` },
-      { label: "Validity", value: `${doc.validityDays} days` },
-    ]),
   );
 
   out.push(para(doc.attention, { bold: true, size: 10, before: 200, after: 70 }));

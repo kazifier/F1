@@ -18,7 +18,6 @@ const BOTTOM = 54;
 type Rgb = [number, number, number];
 const ACCENT: Rgb = [139, 30, 30];
 const ACCENT_SOFT: Rgb = [246, 237, 237];
-const CARD: Rgb = [247, 245, 245];
 const INK: Rgb = [31, 35, 40];
 const MUTED: Rgb = [102, 112, 128];
 const RULE: Rgb = [230, 220, 220];
@@ -193,8 +192,15 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
 
   // ---- sections -------------------------------------------------------------
   const section = (s: DocSection) => {
-    ensure(120);
-    y += 14;
+    if (s.part) {
+      newPage();
+      write(s.part, { size: 15, bold: true, color: ACCENT, charSpace: 0.6, after: 2 });
+      hairline();
+      y += 16;
+    } else {
+      ensure(120);
+      y += 14;
+    }
     const chipW = 23;
     const chipH = 15;
     pdf.setFillColor(...ACCENT);
@@ -214,6 +220,17 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
 
     for (const p of s.paragraphs ?? []) write(p, { size: 9.5, after: 5 });
     for (const b of s.bullets ?? []) write(`•   ${b}`, { size: 9.5, indent: 12, after: 2.5 });
+    let itemNo = 0;
+    for (const item of s.items ?? []) {
+      itemNo += 1;
+      y += 3;
+      write(`${itemNo}.  ${item.text}`, { size: 9.8, bold: true, color: ACCENT, after: 2 });
+      let subNo = 0;
+      for (const sub of item.subs ?? []) {
+        subNo += 1;
+        write(`${itemNo}.${subNo}   ${sub}`, { size: 9.5, indent: 16, after: 2.5 });
+      }
+    }
     for (const sub of s.subsections ?? []) {
       y += 4;
       write(sub.title, { size: 9.6, bold: true, color: ACCENT, after: 2 });
@@ -286,29 +303,7 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
   });
   y += 62;
 
-  const stats = [
-    { label: "Quoted value", value: offer.priced ? `${offer.currency.code} ${Math.round(offer.totals.grand).toLocaleString("en-US")}` : "Unpriced" },
-    { label: "Delivery", value: `${offer.deliveryWeeks} weeks` },
-    { label: "Validity", value: `${offer.validityDays} days` },
-  ];
-  const boxH = 50;
-  stats.forEach((s, i) => {
-    const x = MARGIN + i * (colW + gap);
-    pdf.setFillColor(...CARD);
-    pdf.rect(x, y, colW, boxH, "F");
-    pdf.setFillColor(...ACCENT);
-    pdf.rect(x, y, 3, boxH, "F");
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(6.8);
-    pdf.setTextColor(...MUTED);
-    pdf.setCharSpace(1);
-    pdf.text(s.label.toUpperCase(), x + 11, y + 17);
-    pdf.setCharSpace(0);
-    pdf.setFontSize(12.5);
-    pdf.setTextColor(...ACCENT);
-    pdf.text(s.value, x + 11, y + 37);
-  });
-  y += boxH + 26;
+  y += 4;
 
   write(offer.attention, { size: 9.8, bold: true, after: 8 });
   write("Dear Sir,", { size: 9.5, after: 10 });

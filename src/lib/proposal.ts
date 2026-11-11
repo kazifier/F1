@@ -372,9 +372,13 @@ export interface DocSection {
   title: string;
   paragraphs?: string[];
   bullets?: string[];
+  /** numbered list, each entry optionally carrying sub-numbered lines */
+  items?: { text: string; subs?: string[] }[];
   subsections?: DocSubsection[];
   table?: DocTable;
   note?: string;
+  /** opens a new part of the offer: a page break, a part heading, and numbering restarts */
+  part?: string;
 }
 
 export interface DocMeta {
@@ -747,7 +751,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
   // the basis or limit sits under the item, in the same column, in a smaller face
   const scopeTable: DocTable = {
-    head: ["#", "Scope item", "End user", "Client (EPC)", "Ramsis"],
+    head: ["#", "Scope item", "End user", "Client", "Ramsis"],
     widths: [0.4, 7.2, 0.7, 0.85, 0.7],
     align: ["center", "left", "center", "center", "center"],
     bands: scopeBands,
@@ -784,20 +788,16 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
   // ---- equipment schedule ---------------------------------------------------
   const equipmentTable: DocTable = {
-    head: ["Tag", "Service / description", "Size ID × T/T", "Qty", "Design P", "Design T", "Material", "Weight (kg)"],
-    widths: [0.9, 2.6, 1.5, 0.5, 1.0, 1.0, 1.5, 1.1],
-    align: ["left", "left", "left", "center", "right", "right", "left", "right"],
+    head: ["Tag", "Equipment", "Size ID × T/T", "Qty", "Material", "Weight (kg)"],
+    widths: [0.9, 3.1, 1.5, 0.5, 1.5, 1.1],
+    align: ["left", "left", "left", "center", "left", "right"],
     rows: linesPerEquipment.map(({ eq, weight: w }) => {
       const shellMat = eq.parts.shell?.[0]?.sh_mat || eq.parts.head?.[0]?.hd_mat || "SA-516 Gr.70";
-      const p = eq.he ? eq.he.shellPressure : eq.designPressure;
-      const t = eq.he ? eq.he.shellTemp : eq.designTemperature;
       return [
         eq.tag,
-        `${eq.name}${eq.service ? ` — ${eq.service}` : ""}`,
+        eq.name,
         `${fmtInt(eq.diameter)} × ${fmtInt(eq.ttLength)} mm`,
         String(eq.qty),
-        `${fmtInt(p)} kPa`,
-        `${fmtInt(t)} °C`,
         shellMat,
         fmtInt(w),
       ];
@@ -847,14 +847,14 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   };
 
   const planTable: DocTable = {
-    head: ["#", "Activity", "Weeks from PO", "Days"],
-    widths: [0.4, 5.2, 2.1, 0.9],
+    head: ["#", "Activity", "Weeks from PO", "Duration (weeks)"],
+    widths: [0.4, 4.6, 1.9, 1.3],
     align: ["center", "left", "center", "right"],
     rows: plan.activities.map((a) => [
       String(a.seq),
       a.activity,
       a.startWeek === a.finishWeek ? `W${a.startWeek}` : `W${a.startWeek} – W${a.finishWeek}`,
-      fmtNum(a.days, 1),
+      fmtNum(a.days / 7, 1),
     ]),
     bars: plan.activities.map((a) => ({ start: a.startDay, days: a.days })),
     barTotal: plan.totalDays,
@@ -865,6 +865,8 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const sections: DocSection[] = [];
   let no = 0;
   const add = (title: string, body: Omit<DocSection, "no" | "title"> = {}) => {
+    // a section that opens a part starts on a fresh page and renumbers from 01
+    if (body.part) no = 0;
     sections.push({ no: String(++no), title, ...body });
   };
 
@@ -872,11 +874,21 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
   if (technical) {
     add("Applicable documents", {
-      bullets: [
-        `Our offer ${settings.offerNo} Rev. ${settings.revision || "R0"} dated ${dateText}.`,
-        `Enquiry ${project.projectNo} — ${project.projectName}${settings.enquiryRef ? `, RFQ reference ${settings.enquiryRef}` : ""}.`,
-        `Mechanical datasheet(s) and drawings issued for ${tags}, as provided by ${endUserClean}.`,
-        "ASME Boiler & Pressure Vessel Code, Section VIII, Division 1 (latest edition), ASME Section IX and ASME Section V.",
+      items: [
+        {
+          text: "Offer and enquiry",
+          subs: [
+            `Our offer ${settings.offerNo} Rev. ${settings.revision || "R0"} dated ${dateText}.`,
+            `Enquiry ${project.projectNo} — ${project.projectName}${settings.enquiryRef ? `, RFQ reference ${settings.enquiryRef}` : ""}.`,
+          ],
+        },
+        {
+          text: "Reference documents",
+          subs: [
+            `Mechanical datasheet(s) and drawings issued for ${tags}, as provided by ${endUserClean}.`,
+            "ASME Boiler & Pressure Vessel Code, Section VIII, Division 1 (latest edition), ASME Section IX and ASME Section V.",
+          ],
+        },
       ],
     });
   }
@@ -884,8 +896,6 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   add("Scope matrix — end user, client and Ramsis", {
     table: scopeTable,
     paragraphs: [
-      "The matrix fixes who does what between the three parties to this offer. The end user owns the plant and is the ultimate approver of the equipment specification; the client (EPC) issues the purchase order and administers the contract; Ramsis Engineering designs, manufactures, tests and delivers the equipment.",
-      "The lines run in the order the work happens — process design and datasheet, engineering, procurement, fabrication, inspection and testing, finishing, then dispatch. Process design and guarantees are carried in full by Ramsis; fabrication engineering and shop-level scope retained by the client or its nominated fabricator are listed separately. Each line carries its basis or limit beneath it, so no line is claimed twice.",
       "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
     ],
   });
@@ -897,46 +907,8 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       ],
       table: planTable,
       note: plan.pwht
-        ? "PWHT is included and sits inside the NDE stage; pushing or removing it from the furnace shifts the hydrostatic test, painting and dispatch by three days."
-        : "PWHT is not required for this scope; if it is added, the NDE stage grows by three days and the hydrostatic test, painting and dispatch shift by three days.",
-    });
-
-    add("Scope of work and supply", {
-      subsections: [
-        {
-          title: "Engineering",
-          bullets: [
-            "Preparation and submission of detailed mechanical design calculations for approval, based on the datasheet and drawings issued by the end user.",
-            "Preparation and submission of fabrication drawings, general arrangement and nozzle orientation for the pressure equipment.",
-            `ASME ‘U’ stamp design certification and National Board registration for ${totalQty} item(s).`,
-            "Preparation and submission of the inspection and test plan (ITP) and the manufacturing record dossier (MDR) index for approval.",
-          ],
-        },
-        {
-          title: "Codes and regulations",
-          bullets: [
-            "Design and manufacture to ASME Section VIII, Division 1 (latest edition).",
-            "Welding to ASME Section IX; non-destructive examination to ASME Section V.",
-            "Flanges to ASME B16.5 and pipe to ASME B36.10 / B36.19 as scheduled.",
-            "End-user and client specifications as stated in the RFQ, wherever they are more stringent than the code.",
-          ],
-        },
-        {
-          title: "Production and supply",
-          bullets: [
-            "Material procurement to the approved fabrication drawings and material list, with full traceability.",
-            "Shop fabrication, fit-up and assembly of the equipment with its support arrangement (skirt, saddles or legs as designed).",
-            "All welded internals for supporting removable internals, trays, demister and vortex breaker where shown on the datasheet.",
-            "Supply and fabrication of lifting lugs, tailing lugs, anchor chair template, grounding lugs, pipe and instrument support clips, ladder and platform support clips, fireproofing clips and the mesh screen for the skirt access opening.",
-            "Internal gaskets and bolting, ladder rungs and grab handles at manways, and deflector plates where shown.",
-            "Non-destructive examination, hydrostatic test and post-weld heat treatment as specified.",
-            "Surface preparation and protective painting to the specified system.",
-            "Seaworthy packing suitable for road, sea and inland transport.",
-            "Final documentation dossier, as-built drawings and material test certificates.",
-            "Pre-commissioning spares: 200% gaskets and 10% bolts, nuts and washers for each size and type.",
-          ],
-        },
-      ],
+        ? "PWHT is included and sits inside the NDE stage; pushing or removing it from the furnace shifts the hydrostatic test, painting and dispatch later by about half a week."
+        : "PWHT is not required for this scope; if it is added, the NDE stage grows by about half a week and the hydrostatic test, painting and dispatch shift accordingly.",
     });
 
     add("Equipment schedule", {
@@ -945,22 +917,6 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       ],
       table: equipmentTable,
       note: "Weights are estimating-grade and exclude packing, transport saddles and loose internals.",
-    });
-
-    const rtEquipment = equipment.filter((e) => e.radiography && e.radiography !== "None");
-    const pwhtEquipment = equipment.filter((e) => e.pWHT === "Yes");
-    add("Inspection and test", {
-      bullets: [
-        "Raw materials are inspected before, during and after manufacture against the approved ITP.",
-        "ASME authorised inspector: yes. Third-party inspection by the client, where required, is carried out at the hold and witness points agreed in the ITP.",
-        "At Ramsis: visual inspection, dimensional measurement, hydrostatic test, non-destructive examination and welding procedure qualification records.",
-        rtEquipment.length
-          ? `Radiography: ${rtEquipment.map((e) => `${e.tag} — ${e.radiography}`).join("; ")}.`
-          : "Radiography is not included unless called for by the datasheet.",
-        pwhtEquipment.length
-          ? `Post-weld heat treatment is included for ${pwhtEquipment.map((e) => e.tag).join(", ")}.`
-          : "Post-weld heat treatment is not included in this offer.",
-      ],
     });
 
     add("Material certification", {
@@ -1044,6 +1000,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   // ---- commercial -----------------------------------------------------------
   if (settings.offerType !== "Technical") {
     add("Price basis", {
+      part: settings.offerType === "Techno-Commercial" ? "Commercial Proposal" : undefined,
       paragraphs: [
         priced
           ? `Prices are in ${currency.name} (${currency.code}), ${logistics.incoterm === "EXW" ? `ex-works ${WORKSHOP.city}, ${WORKSHOP.country}` : `${logistics.incoterm} ${destinationOf(logistics.destination).name}`}, and exclude VAT.`
