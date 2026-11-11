@@ -328,7 +328,7 @@ function buildDocument(doc: ProposalDoc): string {
       "Plant owner / installation site",
     )}${partyCell("Client (EPC)", doc.client, doc.clientAddress || "Issues the purchase order")}${partyCell(
       "Ramsis Engineering",
-      "Sitra, Kingdom of Bahrain",
+      "Askar, Kingdom of Bahrain",
       "Design · fabrication · supply",
     )}</w:tr></w:tbl>` + para("", { after: 160, size: 2 }),
   );

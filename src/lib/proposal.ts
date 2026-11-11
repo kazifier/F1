@@ -43,7 +43,7 @@ export const SCOPE_GROUPS: ScopeGroupDef[] = [
   {
     id: "design",
     title: "Process design and guarantees",
-    note: "Engineering, manufacture, testing and delivery by Ramsis Engineering at the Sitra workshop.",
+    note: "Engineering, manufacture, testing and delivery by Ramsis Engineering at the Askar workshop.",
   },
 ];
 
@@ -201,7 +201,7 @@ const SCOPE_DEFS: ScopeRowDef[] = [
   {
     id: "mdr",
     group: "design",
-    item: "Manufacturing record book (MDR)",
+    item: "Manufacturer's Data Report (MDR)",
     basis: "Agreed drawings, material certificates and inspection records, issued in PDF.",
     defaults: { endUser: "-", client: "A", ramsis: "R" },
   },
@@ -779,7 +779,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
   const priceRows: PriceRow[] = linesPerEquipment.map((r) => ({
     tag: r.eq.tag,
-    description: `${r.eq.name}${r.eq.service ? ` — ${r.eq.service}` : ""}`,
+    description: r.eq.name,
     qty: r.eq.qty,
     weight: r.weight,
     unitPrice: r.roll.total,
@@ -953,7 +953,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
     add("Equipment schedule", {
       paragraphs: [
-        `The offer covers ${totalQty} item(s) of pressure equipment, ${fmtInt(weight)} kg total shop weight, designed and manufactured at our Sitra workshop.`,
+        `The offer covers ${totalQty} item(s) of pressure equipment, ${fmtInt(weight)} kg total shop weight, designed and manufactured at our ${WORKSHOP.city} workshop.`,
       ],
       table: equipmentTable,
       note: "Weights are estimating-grade and exclude packing, transport saddles and loose internals.",
@@ -961,14 +961,14 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
     add("Material certification", {
       paragraphs: [
-        "Material certification for all pressure parts and parts directly welded to pressure parts is to EN 10204 type 3.1; where a type 3.1 certificate is not available, a type 3.2 certificate is produced.",
-        "Material certification for non-pressure parts is to EN 10204 type 2.2. Mill test certificates are made available to the client and the third-party inspector on request before fabrication starts.",
+        "Material certification for all pressure parts and parts directly welded to pressure parts is to EN 10204 type 3.1, which is the default certification for this offer.",
+        "Where a type 3.1 certificate is required for items outside that scope, or where a type 3.2 certificate is called for, it will be charged extra. Material certification for non-pressure parts is to EN 10204 type 2.2, and mill test certificates are made available to the client and the third-party inspector on request before fabrication starts.",
       ],
     });
 
     add("Manufacturing location", {
       paragraphs: [
-        `Ramsis Engineering, ${WORKSHOP.city}, Kingdom of ${WORKSHOP.country}. Port of loading: ${WORKSHOP.port}.`,
+        `Ramsis Engineering, ${WORKSHOP.city}, Kingdom of ${WORKSHOP.country}.`,
         "Coordinates: 26.074806, 50.603434. Quality system to ISO 9001:2015.",
       ],
     });
@@ -1020,7 +1020,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
     add("Defects liability / mechanical guarantee", {
       paragraphs: [
-        `${settings.warrantyMonths} months from the date the plant is put into operation, or ${settings.warrantyExWeeks} months from ex-works ${WORKSHOP.city}, ${WORKSHOP.country} delivery, whichever is earlier.`,
+        `${settings.warrantyMonths} months from the date the equipment is put into operation or ${settings.warrantyExWeeks} months from ex-works, ${WORKSHOP.country} delivery, whichever is earlier.`,
       ],
     });
   }
@@ -1047,7 +1047,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       paragraphs: [
         `Payment terms are structured so that 100% of the material cost is recovered through material payments before fabrication starts. The material content of this price is ${money(material)} (${fmtNum(coverage.materialPct, 1)}% of the quoted value); material milestones ${materialNos} total ${fmtNum(coverage.materialPaidPct, 1)}% of the price${priced ? ` — ${money(coverage.materialPaid)}` : ""}.`,
         "All payments are released against the milestone evidence stated below; material payments are supported by unpriced purchase order copies and mill certificates.",
-        `The advance is 10% with the purchase order, 15% on approval of the design and drawings, and 5% on the final documentation dossier (MDR).${retentionPct > 0 ? ` A retention of ${fmtNum(retentionPct, 1)}% is withheld from the milestones and released on the final acceptance certificate.` : ""}`,
+        `The advance is 10% with the purchase order, 15% on approval of the design and drawings, and 5% on the Manufacturer's Data Report (MDR).${retentionPct > 0 ? ` A retention of ${fmtNum(retentionPct, 1)}% is withheld from the milestones and released on the final acceptance certificate.` : ""}`,
       ],
       table: paymentTable,
       note: coverage.covered

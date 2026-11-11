@@ -291,7 +291,7 @@ const MIN_FREIGHT = 6; // BHD per consolidated line
  */
 export const WORKSHOP = {
   country: "Bahrain",
-  city: "Sitra",
+  city: "Askar",
   port: "Khalifa Bin Salman",
 } as const;
 
@@ -604,7 +604,7 @@ export function shipmentPlan(
       docs: 0,
       lines: localEntries.length,
       subtotal: 0,
-      note: "Direct purchase in Bahrain — no customs entry, short internal haul to Sitra",
+      note: "Direct purchase in Bahrain — no customs entry, short internal haul to Askar",
     };
     localRow.subtotal = localRow.freight + localRow.handling + localRow.packingCost + localRow.duty + localRow.insurance + localRow.surcharge + localRow.clearance + localRow.docs;
     rows.push(localRow);

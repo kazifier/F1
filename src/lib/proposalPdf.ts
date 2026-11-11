@@ -280,7 +280,7 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
   const parties = [
     { label: "End user", value: offer.endUser || "—", detail: "Plant owner / site" },
     { label: "Client (EPC)", value: offer.client || "—", detail: offer.clientAddress || "Issues the purchase order" },
-    { label: "Ramsis Engineering", value: "Sitra, Bahrain", detail: "Design · fabrication · supply" },
+    { label: "Ramsis Engineering", value: "Askar, Bahrain", detail: "Design · fabrication · supply" },
   ];
   parties.forEach((p, i) => {
     const x = MARGIN + i * (colW + gap);
