@@ -227,7 +227,7 @@ export default function ProposalPage() {
       <div className="card">
         <div className="card-head">
           <h3>Scope matrix — end user, client and Ramsis</h3>
-          <span className="hint">two blocks · in shop-route order · R / A / C / I / “-”</span>
+          <span className="hint">two blocks · in shop-route order · basis under each line · R / A / C / I / “-”</span>
         </div>
         <div className="card-body tight scroll-x">
           <table className="data" style={{ minWidth: 760 }}>
@@ -264,7 +264,14 @@ export default function ProposalPage() {
                     )}
                     <tr>
                       <td className="num">{i + 1}</td>
-                      <td>{row.item}</td>
+                      <td>
+                        {row.item}
+                        {row.basis && (
+                          <div style={{ fontSize: 11, color: "#667080", marginTop: 2, lineHeight: 1.35 }}>
+                            {row.basis}
+                          </div>
+                        )}
+                      </td>
                       {PARTIES.map((p) => (
                         <td key={p.party} className="num">
                           <select
@@ -287,9 +294,9 @@ export default function ProposalPage() {
         </div>
         <div className="est-note">
           Lines follow the sequence of the work itself — process design and datasheet first, then engineering,
-          procurement, fabrication, inspection and testing, finishing and dispatch. Each activity is claimed once, under
-          the party that executes it. The end user is the plant owner, the client is the EPC that issues the purchase
-          order, and Ramsis designs, manufactures, tests and delivers.
+          procurement, fabrication, inspection and testing, finishing and dispatch. The basis or limit is printed under
+          each line in the offer, so each activity is claimed once. The end user is the plant owner, the client is the
+          EPC that issues the purchase order, and Ramsis designs, manufactures, tests and delivers.
         </div>
       </div>
 

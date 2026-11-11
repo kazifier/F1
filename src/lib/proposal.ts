@@ -48,7 +48,7 @@ export const SCOPE_GROUPS: ScopeGroupDef[] = [
   {
     id: "fabrication",
     title: "Fabrication engineering and shop limits",
-    note: "Shop-level scope retained by the client or its nominated fabricator.",
+    note: "Shop-level scope retained by the client or its nominated fabricator, and the basis or limit that applies to it.",
   },
 ];
 
@@ -56,7 +56,7 @@ export interface ScopeRowDef {
   id: string;
   item: string;
   group: ScopeGroupId;
-  /** basis, limit or exclusion — held in the model but no longer printed */
+  /** basis, limit or exclusion printed against the line */
   basis?: string;
   defaults: Record<ScopeParty, ScopeMark>;
 }
@@ -749,11 +749,13 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     }
   });
 
+  // the basis or limit sits under the item, in the same column, in a smaller face
   const scopeTable: DocTable = {
     head: ["#", "Scope item", "End user", "Client (EPC)", "Ramsis"],
     widths: [0.4, 7.2, 0.7, 0.85, 0.7],
     align: ["center", "left", "center", "center", "center"],
     bands: scopeBands,
+    sub: SCOPE_ROWS.map((row) => [undefined, row.basis, undefined, undefined, undefined]),
     rows: SCOPE_ROWS.map((row, i) => [
       String(i + 1),
       row.item,
@@ -887,7 +889,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     table: scopeTable,
     paragraphs: [
       "The matrix fixes who does what between the three parties to this offer. The end user owns the plant and is the ultimate approver of the equipment specification; the client (EPC) issues the purchase order and administers the contract; Ramsis Engineering designs, manufactures, tests and delivers the equipment.",
-      "The lines run in the order the work happens — process design and datasheet, engineering, procurement, fabrication, inspection and testing, finishing, then dispatch. Process design and guarantees are carried in full by Ramsis; fabrication engineering and shop-level scope retained by the client or its nominated fabricator are listed separately. Each line appears once, under the party that executes it.",
+      "The lines run in the order the work happens — process design and datasheet, engineering, procurement, fabrication, inspection and testing, finishing, then dispatch. Process design and guarantees are carried in full by Ramsis; fabrication engineering and shop-level scope retained by the client or its nominated fabricator are listed separately. Each line carries its basis or limit beneath it, so no line is claimed twice.",
       "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
     ],
   });
