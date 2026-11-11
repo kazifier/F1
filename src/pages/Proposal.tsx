@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, fmtInt, money } from "../lib/store";
-import { buildProposal, SCOPE_GROUPS, SCOPE_ROWS, SCOPE_MARKS, scopeMark } from "../lib/proposal";
+import { buildProposal, SCOPE_ROWS, SCOPE_MARKS, scopeMark } from "../lib/proposal";
 import { exportProposalDocx } from "../lib/proposalDocx";
 import { exportProposalPdf, proposalPdfUrl } from "../lib/proposalPdf";
 import type { OfferType, ScopeParty } from "../lib/types";
@@ -268,28 +268,8 @@ export default function ProposalPage() {
             </thead>
             <tbody>
               {SCOPE_ROWS.map((row, i) => {
-                const startsGroup = i === 0 || SCOPE_ROWS[i - 1].group !== row.group;
-                const group = SCOPE_GROUPS.find((g) => g.id === row.group);
                 return (
                   <Fragment key={row.id}>
-                    {startsGroup && (
-                      <tr>
-                        <td
-                          colSpan={5}
-                          style={{
-                            background: "#f6eded",
-                            color: "#8b1e1e",
-                            fontWeight: 600,
-                            fontSize: 11,
-                            letterSpacing: "0.04em",
-                            textTransform: "uppercase",
-                          }}
-                          title={group?.note}
-                        >
-                          {group?.title}
-                        </td>
-                      </tr>
-                    )}
                     <tr>
                       <td className="num">{i + 1}</td>
                       <td>

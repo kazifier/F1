@@ -181,9 +181,20 @@ function tableXml(t: DocTable, o: { striped?: boolean; emphasisLast?: boolean } 
     })
     .join("");
 
+  // merged full-width rows under the body (the price written out, for example)
+  const foot = (t.footRows ?? [])
+    .map(
+      (f) =>
+        `<w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr><w:tcW w:w="${USABLE}" w:type="dxa"/><w:gridSpan w:val="${t.head.length || 1}"/><w:tcBorders>${["top", "left", "bottom", "right"]
+          .map((s) => `<w:${s} w:val="single" w:sz="4" w:color="${RULE}"/>`)
+          .join("")}</w:tcBorders><w:tcMar><w:top w:w="80" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tcMar></w:tcPr>` +
+        `<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="264" w:lineRule="auto"/></w:pPr>${run(f.text, { size: 8.5, bold: !!f.bold, color: INK })}</w:p></w:tc></w:tr>`,
+    )
+    .join("");
+
   return (
     `<w:tbl><w:tblPr><w:tblW w:w="${USABLE}" w:type="dxa"/><w:tblLayout w:type="fixed"/>${borders}</w:tblPr>` +
-    `<w:tblGrid>${grid}</w:tblGrid>${head}${body}</w:tbl>` +
+    `<w:tblGrid>${grid}</w:tblGrid>${head}${body}${foot}</w:tbl>` +
     para("", { after: 140, size: 2 })
   );
 }

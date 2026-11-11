@@ -187,6 +187,20 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
       }
       drawRow(row, isTotal, isTotal ? ACCENT_SOFT : i % 2 === 1 ? ZEBRA : undefined, isTotal ? ACCENT : INK, i);
     });
+    // merged full-width rows under the body, in the table's own face
+    for (const f of t.footRows ?? []) {
+      pdf.setFont("helvetica", f.bold ? "bold" : "normal");
+      pdf.setFontSize(size);
+      const lines = pdf.splitTextToSize(f.text, WIDTH - padX * 2) as string[];
+      const h = lines.length * lead + padY * 2;
+      if (y + h > PAGE_H - BOTTOM) newPage();
+      pdf.setDrawColor(...RULE);
+      pdf.setLineWidth(0.5);
+      pdf.rect(MARGIN, y, WIDTH, h, "S");
+      pdf.setTextColor(...INK);
+      lines.forEach((line, li) => pdf.text(line, MARGIN + padX, y + padY + size + li * lead));
+      y += h;
+    }
     y += 9;
   };
 

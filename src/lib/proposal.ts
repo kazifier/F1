@@ -303,6 +303,8 @@ export interface DocTable {
   sub?: (string | undefined)[][];
   /** programme bars, one per row, drawn inside the bar column */
   bars?: ({ start: number; days: number } | undefined)[];
+  /** merged full-width rows printed under the table body */
+  footRows?: { text: string; bold?: boolean }[];
   barTotal?: number;
   barColumn?: number;
 }
@@ -539,7 +541,8 @@ function buildPayment(
         const monthly = m0 + dm;
         const hydro = h0 + dh;
         const dispatch = total - monthly - hydro;
-        if (monthly < 0 || hydro < 0 || dispatch < 0) continue;
+        // every milestone carries a real percentage — none of them is left blank
+        if (monthly < 2 || hydro < 2 || dispatch < 2) continue;
         if (roundStep(monthly) && roundStep(hydro) && roundStep(dispatch)) return [monthly, hydro, dispatch];
       }
     }
@@ -753,20 +756,11 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const tags = equipment.map((e) => `${e.tag} (${e.name})`).join(", ");
   const dateText = dateLabel(settings.date);
 
-  // one row per scope item, with a band wherever the group changes
-  const scopeBands: { before: number; title: string }[] = [];
-  SCOPE_ROWS.forEach((row, i) => {
-    if (i === 0 || SCOPE_ROWS[i - 1].group !== row.group) {
-      scopeBands.push({ before: i, title: SCOPE_GROUPS.find((g) => g.id === row.group)?.title ?? row.group });
-    }
-  });
-
   // the basis or limit sits under the item, in the same column, in a smaller face
   const scopeTable: DocTable = {
     head: ["#", "Scope item", "End user", "Client", "Ramsis"],
     widths: [0.4, 7.2, 0.7, 0.85, 0.7],
     align: ["center", "left", "center", "center", "center"],
-    bands: scopeBands,
     sub: SCOPE_ROWS.map((row) => [undefined, row.basis, undefined, undefined, undefined]),
     rows: SCOPE_ROWS.map((row, i) => [
       String(i + 1),
@@ -841,13 +835,14 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
         priced ? money(grand) : "Withheld (unpriced commercial offer)",
       ],
     ],
+    footRows: [
+      {
+        text: priced
+          ? `Amount in words: ${amountInWords(grand, currency)}.`
+          : "Prices, taxes and the amount in words are issued with the priced commercial offer.",
+      },
+    ],
   };
-
-  const materialNos = payment
-    .filter((p) => p.kind === "Material")
-    .map((p) => p.no)
-    .join(" and ");
-  const retentionPct = Number.isFinite(settings.retentionPct) ? Math.max(0, settings.retentionPct) : 0;
 
   const paymentTable: DocTable = {
     head: ["No", "Milestone", "%", "Amount"],
@@ -1033,22 +1028,11 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
         priced
           ? `Prices are in ${currency.name} (${currency.code}), ${logistics.incoterm === "EXW" ? `ex-works ${WORKSHOP.city}, ${WORKSHOP.country}` : `${logistics.incoterm} ${destinationOf(logistics.destination).name}`}, and exclude VAT.`
           : "This is an unpriced commercial offer: prices are deliberately withheld so that the technical and commercial terms can be reviewed and agreed before the priced offer is issued.",
-        priced
-          ? "Prices are firm for the validity period of this offer and include design, material, fabrication, welding, testing, painting, packing and the documentation dossier."
-          : "The scope, schedule, payment terms and delivery basis below are binding on the priced offer that follows.",
       ],
       table: priceTable,
-      note: priced
-        ? `Amount in words: ${amountInWords(grand, currency)}.`
-        : "Prices, taxes and the amount in words are issued with the priced commercial offer.",
     });
 
     add("Payment schedule", {
-      paragraphs: [
-        `Payment terms are structured so that 100% of the material cost is recovered through material payments before fabrication starts. The material content of this price is ${money(material)} (${fmtNum(coverage.materialPct, 1)}% of the quoted value); material milestones ${materialNos} total ${fmtNum(coverage.materialPaidPct, 1)}% of the price${priced ? ` — ${money(coverage.materialPaid)}` : ""}.`,
-        "All payments are released against the milestone evidence stated below; material payments are supported by unpriced purchase order copies and mill certificates.",
-        `The advance is 10% with the purchase order, 15% on approval of the design and drawings, and 5% on the Manufacturer's Data Report (MDR).${retentionPct > 0 ? ` A retention of ${fmtNum(retentionPct, 1)}% is withheld from the milestones and released on the final acceptance certificate.` : ""}`,
-      ],
       table: paymentTable,
       note: coverage.covered
         ? undefined
