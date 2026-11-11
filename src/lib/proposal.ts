@@ -956,8 +956,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
     add("Material certification", {
       paragraphs: [
-        "Material certification for all pressure parts and parts directly welded to pressure parts is to EN 10204 type 3.1, which is the default certification for this offer.",
-        "Where a type 3.1 certificate is required for items outside that scope, or where a type 3.2 certificate is called for, it will be charged extra. Material certification for non-pressure parts is to EN 10204 type 2.2, and mill test certificates are made available to the client and the third-party inspector on request before fabrication starts.",
+        "Material certification for all pressure parts and parts directly welded to pressure parts is EN 10204 type 3.1 only. If type 3.2 certificate is required, it will be charged extra.",
       ],
     });
 
