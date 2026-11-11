@@ -302,7 +302,7 @@ export interface DocTable {
   /** secondary text printed under a cell in a smaller muted face */
   sub?: (string | undefined)[][];
   /** programme bars, one per row, drawn inside the bar column */
-  bars?: { start: number; days: number }[];
+  bars?: ({ start: number; days: number } | undefined)[];
   barTotal?: number;
   barColumn?: number;
 }
@@ -375,6 +375,10 @@ export interface ManufacturingPlan {
   deliveryDays: number;
   deliveryWeeks: number;
   pwht: boolean;
+  /** sea, clearance and inland leg added for a delivered incoterm */
+  transitWeeks?: number;
+  totalWeeks?: number;
+  transitLabel?: string;
 }
 
 export interface ProposalDoc {
@@ -667,6 +671,16 @@ export function buildManufacturingPlan(settings: ProposalSettings, pwht: boolean
   return { activities, totalDays: cursor, deliveryDays, deliveryWeeks, pwht };
 }
 
+/** sea leg, clearance and inland haul at the quoted destination */
+const SEA_WEEKS: Record<string, number> = { GCC: 1, MENA: 2, ASIA: 3, EU: 4, NA: 4 };
+
+function transitWeeks(logistics: LogisticsSettings): number {
+  const dest = destinationOf(logistics.destination);
+  const sea = SEA_WEEKS[dest.region] ?? 3;
+  const inland = Math.max(1, Math.ceil(dest.inlandKm / 500));
+  return Math.round((sea + inland + 1) * 2) / 2;
+}
+
 // ---------------------------------------------------------------------------
 // Main builder
 // ---------------------------------------------------------------------------
@@ -715,7 +729,18 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const priced = settings.offerType !== "Unpriced Commercial" && settings.offerType !== "Technical";
   const { payment, coverage } = buildPayment(settings, material, grand);
   const pwhtRequired = equipment.some((e) => e.pWHT === "Yes");
-  const plan = buildManufacturingPlan(settings, pwhtRequired);
+  const basePlan = buildManufacturingPlan(settings, pwhtRequired);
+  const dest = destinationOf(logistics.destination);
+  // outside ex-works the schedule carries the delivery leg as well, so the client sees site arrival
+  const transit = logistics.incoterm === "EXW" ? 0 : transitWeeks(logistics);
+  const totalWeeks = basePlan.deliveryWeeks + transit;
+  const transitLabel = `Sea freight, customs clearance and inland delivery to ${dest.name}`;
+  const plan: ManufacturingPlan = {
+    ...basePlan,
+    transitWeeks: transit,
+    totalWeeks,
+    transitLabel,
+  };
 
   const clientName = settings.client.trim() || project.client;
   const endUserName = settings.endUser.trim() || project.client;
@@ -835,18 +860,41 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     ],
   };
 
+  const planRows = plan.activities.map((a) => [
+    String(a.seq),
+    a.activity,
+    a.startWeek === a.finishWeek ? `W${a.startWeek}` : `W${a.startWeek} – W${a.finishWeek}`,
+    fmtNum(a.days / 7, 1),
+  ]);
+  const planBars: ({ start: number; days: number } | undefined)[] = plan.activities.map((a) => ({
+    start: a.startDay,
+    days: a.days,
+  }));
+  if (transit > 0) {
+    planRows.push([
+      String(plan.activities.length + 1),
+      transitLabel,
+      `W${plan.deliveryWeeks + 1} – W${totalWeeks}`,
+      fmtNum(transit, 1),
+    ]);
+    planBars.push({ start: plan.deliveryWeeks * 7, days: transit * 7 });
+  }
+  planRows.push([
+    "",
+    logistics.incoterm === "EXW" ? "Total — ex-works, ready for collection" : `Total — delivered to ${dest.name}`,
+    `W1 – W${totalWeeks}`,
+    fmtNum(totalWeeks, 1),
+  ]);
+  planBars.push(undefined);
+
   const planTable: DocTable = {
     head: ["#", "Activity", "Weeks from PO", "Duration (weeks)"],
     widths: [0.4, 4.6, 1.9, 1.3],
     align: ["center", "left", "center", "right"],
-    rows: plan.activities.map((a) => [
-      String(a.seq),
-      a.activity,
-      a.startWeek === a.finishWeek ? `W${a.startWeek}` : `W${a.startWeek} – W${a.finishWeek}`,
-      fmtNum(a.days / 7, 1),
-    ]),
-    bars: plan.activities.map((a) => ({ start: a.startDay, days: a.days })),
-    barTotal: plan.totalDays,
+    emphasiseLast: true,
+    rows: planRows,
+    bars: planBars,
+    barTotal: totalWeeks * 7,
     barColumn: 2,
   };
 
@@ -893,6 +941,9 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     add("Manufacturing schedule after receipt of PO", {
       paragraphs: [
         `The shop route below covers ${totalQty} item(s), from purchase order receipt to dispatch, and is scaled to the ${plan.deliveryWeeks}-week delivery quoted. Stages follow one another, with planned overlap absorbed inside each stage.`,
+        transit > 0
+          ? `Sea freight, customs clearance and inland delivery to ${dest.name} add about ${fmtNum(transit, 0)} weeks on the ${logistics.incoterm} terms, so the equipment reaches site about ${fmtNum(totalWeeks, 0)} weeks after the order.`
+          : `The equipment is ready for collection ex-works ${WORKSHOP.city} after ${plan.deliveryWeeks} weeks; freight, clearance and inland delivery are to the client's account and are not in this programme.`,
       ],
       table: planTable,
       note: plan.pwht

@@ -107,7 +107,7 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
       const sub = subLinesIn(r);
       const mainH = Math.max(...lines.map((l) => l.length)) * lead;
       const subH = sub ? Math.max(...sub.map((l) => l.length)) * subLead : 0;
-      return mainH + subH + (barOf(r) ? barH + 4 : 0) + padY * 2;
+      return mainH + subH + padY * 2;
     };
 
     const drawRow = (cells: string[], bold: boolean, fill?: Rgb, textColor: Rgb = INK, r = -1) => {

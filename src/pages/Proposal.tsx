@@ -213,7 +213,35 @@ export default function ProposalPage() {
                   <td className="num">{(a.days / 7).toFixed(1)}</td>
                 </tr>
               ))}
+              {doc.plan.transitWeeks ? (
+                <tr>
+                  <td className="num">{doc.plan.activities.length + 1}</td>
+                  <td>{doc.plan.transitLabel}</td>
+                  <td>
+                    <div style={{ position: "relative", height: 14, background: "#f3f1f1", borderRadius: 3 }}>
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${(doc.plan.totalDays / ((doc.plan.totalWeeks ?? doc.plan.deliveryWeeks) * 7)) * 100}%`,
+                          width: `${Math.max(1.5, ((doc.plan.transitWeeks * 7) / ((doc.plan.totalWeeks ?? doc.plan.deliveryWeeks) * 7)) * 100)}%`,
+                          top: 2,
+                          bottom: 2,
+                          background: "#c8a6a6",
+                          borderRadius: 2,
+                        }}
+                      />
+                    </div>
+                  </td>
+                  <td className="num">{doc.plan.transitWeeks.toFixed(1)}</td>
+                </tr>
+              ) : null}
             </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={3}>Total — {doc.plan.totalWeeks ?? doc.plan.deliveryWeeks} weeks from PO</td>
+                <td className="num">{(doc.plan.totalWeeks ?? doc.plan.deliveryWeeks).toFixed(1)}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
         <div className="est-note">
