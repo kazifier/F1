@@ -124,7 +124,6 @@ const SCOPE_DEFS: ScopeRowDef[] = [
     id: "nde",
     group: "design",
     item: "Non-destructive examination (RT / UT / MT / PT)",
-    basis: "To the applicable ASME code, approved ITP and job specification. Additional coverage or special acceptance introduced after award is a commercial adjustment.",
     defaults: { endUser: "I", client: "C", ramsis: "R" },
   },
   {
@@ -144,7 +143,6 @@ const SCOPE_DEFS: ScopeRowDef[] = [
     id: "pwht",
     group: "design",
     item: "Post-weld heat treatment (where specified)",
-    basis: "Per code, approved drawings and agreed specification; further cycles arising from later design revisions are a variation.",
     defaults: { endUser: "-", client: "C", ramsis: "R" },
   },
   {
@@ -164,7 +162,6 @@ const SCOPE_DEFS: ScopeRowDef[] = [
     id: "tpi",
     group: "design",
     item: "Third-party inspection (TPI) and client witness points",
-    basis: "TPI agency charges and client-appointed inspection are to the client's account; hold and witness points as agreed in the ITP.",
     defaults: { endUser: "I", client: "R", ramsis: "C" },
   },
   {
@@ -177,7 +174,6 @@ const SCOPE_DEFS: ScopeRowDef[] = [
     id: "lugs",
     group: "design",
     item: "Lifting lugs, trunnions, external support cleats, rings and earthing lugs",
-    basis: "BOM-listed only; final arrangement per the approved drawings.",
     defaults: { endUser: "-", client: "C", ramsis: "R" },
   },
   {
