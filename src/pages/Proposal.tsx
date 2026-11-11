@@ -28,7 +28,10 @@ export default function ProposalPage() {
   );
 
   const priced = doc.priced;
-  const materialRows = doc.payment.filter((p) => p.kind === "Material");
+  const materialNos = doc.payment
+    .filter((p) => p.kind === "Material")
+    .map((p) => p.no)
+    .join(" and ");
 
   // in-app preview of the finished A4 offer, before anything is downloaded
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -151,8 +154,7 @@ export default function ProposalPage() {
             <Field label="Delivery (weeks)"><input type="number" value={proposal.deliveryWeeks} onChange={(e) => setProposal({ deliveryWeeks: Number(e.target.value) })} /></Field>
             <Field label="Payment period (days)"><input type="number" value={proposal.paymentDays} onChange={(e) => setProposal({ paymentDays: Number(e.target.value) })} /></Field>
             <Field label="Advance with PO (%)"><input type="number" step="1" value={proposal.advancePct} onChange={(e) => setProposal({ advancePct: Number(e.target.value) })} /></Field>
-            <Field label="Material PO release (%)"><input type="number" step="1" value={proposal.materialPoPct} onChange={(e) => setProposal({ materialPoPct: Number(e.target.value) })} /></Field>
-            <Field label="Retention on MDR (%)"><input type="number" step="1" value={proposal.retentionPct} onChange={(e) => setProposal({ retentionPct: Number(e.target.value) })} /></Field>
+            <Field label="Design approval (%)"><input type="number" step="1" value={proposal.designPct} onChange={(e) => setProposal({ designPct: Number(e.target.value) })} /></Field>
             <Field label="Warranty (months / ex-works)"><div style={{ display: "flex", gap: 6 }}>
               <input type="number" value={proposal.warrantyMonths} onChange={(e) => setProposal({ warrantyMonths: Number(e.target.value) })} />
               <input type="number" value={proposal.warrantyExWeeks} onChange={(e) => setProposal({ warrantyExWeeks: Number(e.target.value) })} />
@@ -264,11 +266,31 @@ export default function ProposalPage() {
             </tfoot>
           </table>
         </div>
+        <div className="card-body">
+          <div className="grid g2">
+            <Field label="Retention held (%) — bottom of the schedule">
+              <input
+                type="number"
+                step="1"
+                min={0}
+                max={90}
+                value={proposal.retentionPct}
+                onChange={(e) => setProposal({ retentionPct: Number(e.target.value) })}
+                placeholder="0"
+              />
+            </Field>
+            <div className="est-note" style={{ margin: 0 }}>
+              {proposal.retentionPct > 0
+                ? `${proposal.retentionPct}% is withheld from the milestones and released on the final acceptance certificate; the milestones then total ${(100 - proposal.retentionPct).toFixed(1)}%.`
+                : "Default 0% — no retention is withheld, and the milestones total 100% of the price."}
+            </div>
+          </div>
+        </div>
         <div className="est-note">
           The material share of the quoted price is measured from the BOQ roll-up ({doc.coverage.materialPct.toFixed(1)}%).
-          Milestones 1{proposal.materialPoPct > 0 ? "–" : ""}{materialRows.length > 1 ? `–${materialRows.length}` : ""}{" "}
-          are material payments and total {doc.coverage.materialPaidPct.toFixed(1)}% — enough to recover 100% of the
-          material cost before fabrication starts. The balance is released against fabrication, dispatch and the MDR.
+          Milestones {materialNos} are material payments and total {doc.coverage.materialPaidPct.toFixed(1)}% — enough to
+          recover 100% of the material cost before fabrication starts. The balance is released against design approval,
+          monthly fabrication progress, the hydrostatic test, dispatch and the MDR.
         </div>
       </div>
 

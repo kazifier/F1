@@ -328,7 +328,7 @@ export interface DocMeta {
 export interface PaymentMilestone {
   no: number;
   trigger: string;
-  kind: "Material" | "Progress";
+  kind: "Material" | "Progress" | "Retention";
   pct: number;
   amount: number;
 }
@@ -470,66 +470,73 @@ function buildPayment(
   grand: number,
 ): { payment: PaymentMilestone[]; coverage: MaterialCoverage } {
   const materialPct = grand > 0 ? (material / grand) * 100 : 0;
-  const advance = Math.max(0, settings.advancePct);
-  const onPo = Math.max(0, settings.materialPoPct);
-  // material payments must reach the full material content of the price
-  const toReceipt = Math.max(0, +(materialPct - advance - onPo).toFixed(1));
-  const materialPaidPct = +(advance + onPo + toReceipt).toFixed(1);
-  const remaining = Math.max(0, +(100 - materialPaidPct).toFixed(1));
-  const retention = Math.min(Math.max(0, settings.retentionPct), remaining);
-  const progress = +(remaining - retention).toFixed(1);
-  const fabricationStage = +(progress * 0.6).toFixed(1);
-  const dispatchStage = +(progress - fabricationStage).toFixed(1);
-  // rounding correction lands on the last milestone so the schedule totals 100%
-  const last = +(retention + (100 - (materialPaidPct + progress + retention))).toFixed(1);
+  const pct = (v: number | undefined, fallback: number) => (Number.isFinite(v) ? Math.max(0, v as number) : fallback);
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+
+  const advance = pct(settings.advancePct, 10);
+  const design = pct(settings.designPct, 10);
+  // retention sits at the bottom of the schedule, released on final acceptance
+  const retention = Math.min(pct(settings.retentionPct, 0), Math.max(0, 100 - advance - design));
+  // the advance and the material-receipt payment must recover the full material content
+  const materialReceipt = r1(Math.max(0, Math.min(materialPct - advance, 100 - advance - design - retention)));
+  // monthly progress, hydro test, dispatch and the MDR share what is left
+  const pool = Math.max(0, r1(100 - advance - design - materialReceipt - retention));
+  const monthly = r1(pool * 0.35);
+  const hydro = r1(pool * 0.15);
+  const dispatchStage = r1(pool * 0.3);
+  // rounding correction lands on the MDR so the schedule totals 100%
+  const mdr = r1(Math.max(0, pool - monthly - hydro - dispatchStage));
 
   const rows: PaymentMilestone[] = [
-    { no: 1, trigger: "Advance payment with the purchase order, against an advance payment guarantee", kind: "Material", pct: advance, amount: 0 },
-    { no: 2, trigger: "Against release of purchase orders for major raw material — plates, heads, SRN forgings, pipe, flanges and tube", kind: "Material", pct: onPo, amount: 0 },
-  ];
-  if (toReceipt > 0) {
-    rows.push({
+    { no: 1, trigger: "Advance along with the purchase order", kind: "Material", pct: advance, amount: 0 },
+    { no: 2, trigger: "Against approval of the design and drawings", kind: "Progress", pct: design, amount: 0 },
+    {
       no: 3,
-      trigger: "Against receipt of major raw material at the Ramsis workshop, Sitra, with mill certificates and unpriced PO copies",
+      trigger: "Against material received at the Ramsis premises, with mill certificates and unpriced purchase order copies",
       kind: "Material",
-      pct: toReceipt,
+      pct: materialReceipt,
       amount: 0,
-    });
-  }
-  if (fabricationStage > 0) {
-    rows.push({
-      no: rows.length + 1,
-      trigger: "On completion of fabrication, NDE and hydrostatic test, against the inspection release note",
+    },
+    {
+      no: 4,
+      trigger: "Against monthly progressive manufacturing / fabrication milestones",
       kind: "Progress",
-      pct: fabricationStage,
+      pct: monthly,
       amount: 0,
-    });
-  }
-  if (dispatchStage > 0) {
-    rows.push({
-      no: rows.length + 1,
+    },
+    {
+      no: 5,
+      trigger: "Against completion of the hydrostatic test on the equipment, on a progressive basis",
+      kind: "Progress",
+      pct: hydro,
+      amount: 0,
+    },
+    {
+      no: 6,
       trigger: "Before dispatch of the equipment from the Ramsis workshop",
       kind: "Progress",
       pct: dispatchStage,
       amount: 0,
-    });
-  }
-  if (last > 0) {
+    },
+    { no: 7, trigger: "On submission of the final documentation dossier (MDR)", kind: "Progress", pct: mdr, amount: 0 },
+  ];
+  if (retention > 0) {
     rows.push({
       no: rows.length + 1,
-      trigger: "On submission of the final documentation dossier (MDR) and as-built drawings",
-      kind: "Progress",
-      pct: last,
+      trigger: "Retention — withheld until expiry of the defects liability period and the final acceptance certificate",
+      kind: "Retention",
+      pct: retention,
       amount: 0,
     });
   }
   const payment = rows.map((r) => ({ ...r, amount: (r.pct / 100) * grand }));
+  const materialPaidPct = r1(advance + materialReceipt);
 
   return {
     payment,
     coverage: {
       material,
-      materialPct: +materialPct.toFixed(1),
+      materialPct: r1(materialPct),
       materialPaidPct,
       materialPaid: (materialPaidPct / 100) * grand,
       covered: materialPaidPct + 1e-6 >= materialPct,
@@ -686,6 +693,12 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       ],
     ],
   };
+
+  const materialNos = payment
+    .filter((p) => p.kind === "Material")
+    .map((p) => p.no)
+    .join(" and ");
+  const retentionPct = Number.isFinite(settings.retentionPct) ? Math.max(0, settings.retentionPct) : 0;
 
   const paymentTable: DocTable = {
     head: ["No", "Milestone", "Type", "%", "Amount"],
@@ -893,8 +906,11 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
     add("Payment schedule", {
       paragraphs: [
-        `Payment terms are structured so that 100% of the material cost is recovered through material payments before fabrication starts. The material content of this price is ${money(material)} (${fmtNum(coverage.materialPct, 1)}% of the quoted value); material milestones 1–${payment.filter((p) => p.kind === "Material").length} total ${fmtNum(coverage.materialPaidPct, 1)}% of the price${priced ? ` — ${money(coverage.materialPaid)}` : ""}.`,
+        `Payment terms are structured so that 100% of the material cost is recovered through material payments before fabrication starts. The material content of this price is ${money(material)} (${fmtNum(coverage.materialPct, 1)}% of the quoted value); material milestones ${materialNos} total ${fmtNum(coverage.materialPaidPct, 1)}% of the price${priced ? ` — ${money(coverage.materialPaid)}` : ""}.`,
         "All payments are released against the milestone evidence stated below; material payments are supported by unpriced purchase order copies and mill certificates.",
+        ...(retentionPct > 0
+          ? [`A retention of ${fmtNum(retentionPct, 1)}% is withheld from the milestones and released on the final acceptance certificate.`]
+          : []),
       ],
       table: paymentTable,
       note: coverage.covered
