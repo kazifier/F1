@@ -248,7 +248,7 @@ export default function ProposalPage() {
           </span>
         </div>
         <div className="card-body tight scroll-x">
-          <table className="data">
+          <table className="data" style={{ minWidth: 720 }}>
             <thead><tr><th>No</th><th>Milestone</th><th>Type</th><th className="num">%</th><th className="num">Amount</th></tr></thead>
             <tbody>
               {doc.payment.map((p) => (
@@ -267,23 +267,22 @@ export default function ProposalPage() {
           </table>
         </div>
         <div className="card-body">
-          <div className="grid g2">
-            <Field label="Retention held (%) — bottom of the schedule">
-              <input
-                type="number"
-                step="1"
-                min={0}
-                max={90}
-                value={proposal.retentionPct}
-                onChange={(e) => setProposal({ retentionPct: Number(e.target.value) })}
-                placeholder="0"
-              />
-            </Field>
-            <div className="est-note" style={{ margin: 0 }}>
-              {proposal.retentionPct > 0
-                ? `${proposal.retentionPct}% is withheld from the milestones and released on the final acceptance certificate; the milestones then total ${(100 - proposal.retentionPct).toFixed(1)}%.`
-                : "Default 0% — no retention is withheld, and the milestones total 100% of the price."}
-            </div>
+          <div className="field" style={{ maxWidth: 340 }}>
+            <label>Retention held (%) — added as the last line of the schedule</label>
+            <input
+              type="number"
+              step="1"
+              min={0}
+              max={90}
+              value={proposal.retentionPct}
+              onChange={(e) => setProposal({ retentionPct: Number(e.target.value) })}
+              placeholder="0"
+            />
+          </div>
+          <div className="est-note" style={{ marginBottom: 0 }}>
+            {proposal.retentionPct > 0
+              ? `${proposal.retentionPct}% is withheld from the milestones and released on the final acceptance certificate; the milestones then total ${(100 - proposal.retentionPct).toFixed(1)}% and the schedule still totals 100%.`
+              : "Default 0% — no retention is withheld, and the seven milestones total 100% of the price."}
           </div>
         </div>
         <div className="est-note">
