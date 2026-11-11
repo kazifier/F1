@@ -37,7 +37,7 @@ interface WriteOpts {
   charSpace?: number;
 }
 
-export function exportProposalPdf(offer: ProposalDoc): void {
+function renderProposalPdf(offer: ProposalDoc): jsPDF {
   const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
   let y = 0;
 
@@ -126,6 +126,22 @@ export function exportProposalPdf(offer: ProposalDoc): void {
 
     drawHead();
     t.rows.forEach((row, i) => {
+      const band = t.bands?.find((b) => b.before === i);
+      if (band) {
+        if (y + 35 > PAGE_H - BOTTOM) {
+          newPage();
+          drawHead();
+        }
+        pdf.setFillColor(...ACCENT_SOFT);
+        pdf.rect(MARGIN, y, WIDTH, 17, "F");
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.2);
+        pdf.setTextColor(...ACCENT);
+        pdf.setCharSpace(0.9);
+        pdf.text(band.title.toUpperCase(), MARGIN + 5, y + 11.4);
+        pdf.setCharSpace(0);
+        y += 17;
+      }
       const isTotal = !!opts.emphasiseLast && i === t.rows.length - 1;
       const h = rowHeight(row, isTotal);
       if (y + h > PAGE_H - BOTTOM) {
@@ -328,5 +344,15 @@ export function exportProposalPdf(offer: ProposalDoc): void {
     pdf.text(`Page ${i} of ${pages}`, PAGE_W - MARGIN, PAGE_H - 20, { align: "right" });
   }
 
-  pdf.save(proposalFileName(offer, "pdf"));
+  return pdf;
+}
+
+export function exportProposalPdf(offer: ProposalDoc): void {
+  renderProposalPdf(offer).save(proposalFileName(offer, "pdf"));
+}
+
+/** object URL of the rendered A4 offer, used by the in-app preview */
+export function proposalPdfUrl(offer: ProposalDoc): string {
+  const pdf = renderProposalPdf(offer);
+  return URL.createObjectURL(pdf.output("blob"));
 }

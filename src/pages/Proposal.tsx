@@ -1,8 +1,8 @@
-import { useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, fmtInt, money } from "../lib/store";
-import { buildProposal, SCOPE_ROWS, SCOPE_MARKS, scopeMark } from "../lib/proposal";
+import { buildProposal, SCOPE_GROUPS, SCOPE_ROWS, SCOPE_MARKS, scopeMark } from "../lib/proposal";
 import { exportProposalDocx } from "../lib/proposalDocx";
-import { exportProposalPdf } from "../lib/proposalPdf";
+import { exportProposalPdf, proposalPdfUrl } from "../lib/proposalPdf";
 import type { OfferType, ScopeParty } from "../lib/types";
 
 const OFFER_TYPES: OfferType[] = ["Techno-Commercial", "Technical", "Commercial", "Unpriced Commercial"];
@@ -30,6 +30,28 @@ export default function ProposalPage() {
   const priced = doc.priced;
   const materialRows = doc.payment.filter((p) => p.kind === "Material");
 
+  // in-app preview of the finished A4 offer, before anything is downloaded
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewSrc, setPreviewSrc] = useState("");
+  const previewUrl = useRef<string | null>(null);
+
+  const openPreview = () => {
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+    const url = proposalPdfUrl(doc);
+    previewUrl.current = url;
+    setPreviewSrc(url);
+    setPreviewOpen(true);
+  };
+
+  const closePreview = () => {
+    setPreviewOpen(false);
+    setPreviewSrc("");
+    if (previewUrl.current) {
+      URL.revokeObjectURL(previewUrl.current);
+      previewUrl.current = null;
+    }
+  };
+
   return (
     <>
       <div className="page-head">
@@ -42,6 +64,9 @@ export default function ProposalPage() {
           </div>
         </div>
         <div className="actions">
+          <button className="btn" onClick={openPreview} title="Review the finished A4 offer before downloading">
+            Preview offer
+          </button>
           <button className="btn" onClick={() => exportProposalPdf(doc)} title="A4 PDF of the same offer">
             Download PDF
           </button>
@@ -144,40 +169,72 @@ export default function ProposalPage() {
       <div className="card">
         <div className="card-head">
           <h3>Scope matrix — end user, client and Ramsis</h3>
-          <span className="hint">R responsible · A approves · C consulted · I informed · “-” excluded</span>
+          <span className="hint">two blocks · basis or limit per line · R / A / C / I / “-”</span>
         </div>
         <div className="card-body tight scroll-x">
           <table className="data">
             <thead>
-              <tr><th>#</th><th>Scope item</th>{PARTIES.map((p) => <th key={p.party} className="num">{p.label}</th>)}</tr>
+              <tr>
+                <th>#</th>
+                <th>Scope item</th>
+                <th>Basis or limit</th>
+                {PARTIES.map((p) => <th key={p.party} className="num">{p.label}</th>)}
+              </tr>
             </thead>
             <tbody>
-              {SCOPE_ROWS.map((row, i) => (
-                <tr key={row.id}>
-                  <td className="num">{i + 1}</td>
-                  <td>{row.item}</td>
-                  {PARTIES.map((p) => (
-                    <td key={p.party} className="num">
-                      <select
-                        className="btn"
-                        style={{ padding: "1px 2px", fontSize: 11, minWidth: 54 }}
-                        value={scopeMark(proposal, row, p.party)}
-                        onChange={(e) => setScopeCell(row.id, p.party, e.target.value)}
-                        title={SCOPE_MARKS.find((m) => m.mark === scopeMark(proposal, row, p.party))?.label}
-                      >
-                        {SCOPE_MARKS.map((m) => <option key={m.mark} value={m.mark}>{m.mark === "-" ? "—" : m.mark}</option>)}
-                      </select>
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {SCOPE_ROWS.map((row, i) => {
+                const startsGroup = i === 0 || SCOPE_ROWS[i - 1].group !== row.group;
+                const group = SCOPE_GROUPS.find((g) => g.id === row.group);
+                return (
+                  <Fragment key={row.id}>
+                    {startsGroup && (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          style={{
+                            background: "#f6eded",
+                            color: "#8b1e1e",
+                            fontWeight: 600,
+                            fontSize: 11,
+                            letterSpacing: "0.04em",
+                            textTransform: "uppercase",
+                          }}
+                          title={group?.note}
+                        >
+                          {group?.title}
+                        </td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td className="num">{i + 1}</td>
+                      <td>{row.item}</td>
+                      <td style={{ fontSize: 11.5, color: "#667080", maxWidth: 380 }}>{row.basis ?? "—"}</td>
+                      {PARTIES.map((p) => (
+                        <td key={p.party} className="num">
+                          <select
+                            className="btn"
+                            style={{ padding: "1px 2px", fontSize: 11, minWidth: 54 }}
+                            value={scopeMark(proposal, row, p.party)}
+                            onChange={(e) => setScopeCell(row.id, p.party, e.target.value)}
+                            title={SCOPE_MARKS.find((m) => m.mark === scopeMark(proposal, row, p.party))?.label}
+                          >
+                            {SCOPE_MARKS.map((m) => <option key={m.mark} value={m.mark}>{m.mark === "-" ? "—" : m.mark}</option>)}
+                          </select>
+                        </td>
+                      ))}
+                    </tr>
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
         <div className="est-note">
-          The matrix is printed as its own section in the offer. The end user is the plant owner where the equipment is
-          installed, the client is the EPC that issues the purchase order, and Ramsis designs, manufactures, tests and
-          delivers. Site installation and insulation stay with the end user unless changed here.
+          Process design and guarantees are Ramsis scope; fabrication engineering and shop-level work are stated
+          separately with their limits. Each line appears once — the duplicated NDE / pressure-test, heat-treatment,
+          painting, internals and code-stamp rows of the old matrix are merged, and every basis or exclusion is printed
+          in the offer. The end user is the plant owner, the client is the EPC that issues the purchase order, and
+          Ramsis designs, manufactures, tests and delivers.
         </div>
       </div>
 
@@ -267,6 +324,58 @@ export default function ProposalPage() {
           the next download.
         </div>
       </div>
+      {previewOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            background: "rgba(17,20,25,0.62)",
+            display: "flex",
+            flexDirection: "column",
+            padding: 14,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 10,
+              color: "#fff",
+              background: "#1f2328",
+              borderRadius: 8,
+              padding: "8px 10px",
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              {doc.title} · {doc.offerNo} Rev. {doc.revision}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>
+              {doc.sections.length} sections · A4 · {doc.priced ? "priced" : "unpriced"}
+            </div>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <a
+                href={previewSrc}
+                target="_blank"
+                rel="noreferrer"
+                className="btn"
+                style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+              >
+                Open in new tab
+              </a>
+              <button className="btn" onClick={() => exportProposalPdf(doc)}>Download PDF</button>
+              <button className="btn btn-primary" onClick={closePreview}>Close</button>
+            </div>
+          </div>
+          <iframe
+            title="Offer preview"
+            src={previewSrc}
+            style={{ flex: 1, width: "100%", border: 0, borderRadius: 8, background: "#fff" }}
+          />
+        </div>
+      )}
     </>
   );
 }

@@ -150,12 +150,20 @@ function tableXml(t: DocTable, o: { striped?: boolean; emphasisLast?: boolean } 
         .join("")}</w:tr>`
     : "";
 
+  // a full-width band row introduces each block of the table
+  const bandRow = (title: string) =>
+    `<w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr><w:tcW w:w="${USABLE}" w:type="dxa"/><w:gridSpan w:val="${t.head.length || 1}"/><w:shd w:val="clear" w:color="auto" w:fill="${ACCENT_SOFT}"/><w:tcBorders>${["top", "left", "bottom", "right"]
+      .map((s) => `<w:${s} w:val="single" w:sz="4" w:color="${RULE}"/>`)
+      .join("")}</w:tcBorders><w:tcMar><w:top w:w="70" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="70" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tcMar></w:tcPr>` +
+    `<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>${run(title, { bold: true, size: 8.5, color: ACCENT, caps: true, tracking: 20 })}</w:p></w:tc></w:tr>`;
+
   const lastIndex = t.rows.length - 1;
   const body = t.rows
     .map((row, r) => {
+      const band = t.bands?.find((b) => b.before === r);
       const totalRow = o.emphasisLast && r === lastIndex;
       const shade = totalRow ? ACCENT_SOFT : o.striped && r % 2 === 1 ? ZEBRA : undefined;
-      return `<w:tr><w:trPr><w:cantSplit/></w:trPr>${row
+      return `${band ? bandRow(band.title) : ""}<w:tr><w:trPr><w:cantSplit/></w:trPr>${row
         .map((c, i) =>
           cellBlocks([{ text: c, bold: totalRow, size: totalRow ? 9 : 8.5, color: totalRow ? ACCENT : INK, after: 0 }], cols[i], {
             shade,

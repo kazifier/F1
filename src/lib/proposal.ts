@@ -30,32 +30,258 @@ export const SCOPE_MARKS: { mark: ScopeMark; label: string }[] = [
   { mark: "-", label: "Not in scope" },
 ];
 
+export type ScopeGroupId = "design" | "fabrication";
+
+export interface ScopeGroupDef {
+  id: ScopeGroupId;
+  title: string;
+  note: string;
+}
+
+/** The two halves of an offer matrix: what we guarantee, and where the shop scope stops. */
+export const SCOPE_GROUPS: ScopeGroupDef[] = [
+  {
+    id: "design",
+    title: "Process design and guarantees",
+    note: "Engineering, manufacture, testing and delivery by Ramsis Engineering at the Sitra workshop.",
+  },
+  {
+    id: "fabrication",
+    title: "Fabrication engineering and shop limits",
+    note: "Shop-level scope retained by the client or its nominated fabricator, and the basis or limit that applies to it.",
+  },
+];
+
 export interface ScopeRowDef {
   id: string;
   item: string;
+  group: ScopeGroupId;
+  /** basis, limit or exclusion printed against the line */
+  basis?: string;
   defaults: Record<ScopeParty, ScopeMark>;
 }
 
-/** Scope of supply split three ways: the plant owner, the EPC that places the PO, and us. */
+/**
+ * Scope of supply split three ways — the plant owner, the EPC that places the PO,
+ * and us — with the basis or limit stated once per line. Duplicated lines (NDE and
+ * pressure testing, heat treatment, painting, internals, code stamp and third-party
+ * inspection) are carried once, under the party that actually executes them.
+ */
 export const SCOPE_ROWS: ScopeRowDef[] = [
-  { id: "pm", item: "Project management, expediting and progress reporting", defaults: { endUser: "I", client: "A", ramsis: "R" } },
-  { id: "design", item: "Mechanical design calculations to ASME VIII Div.1", defaults: { endUser: "I", client: "A", ramsis: "R" } },
-  { id: "drawings", item: "Fabrication drawings, general arrangement and nozzle orientation", defaults: { endUser: "I", client: "A", ramsis: "R" } },
-  { id: "stamp", item: "ASME ‘U’ stamp design certification and National Board registration", defaults: { endUser: "I", client: "C", ramsis: "R" } },
-  { id: "itp", item: "Inspection and test plan (ITP) and quality dossier", defaults: { endUser: "I", client: "A", ramsis: "R" } },
-  { id: "material", item: "Raw material procurement, mill certification and traceability", defaults: { endUser: "-", client: "C", ramsis: "R" } },
-  { id: "fabrication", item: "Shop fabrication, fit-up and assembly", defaults: { endUser: "-", client: "C", ramsis: "R" } },
-  { id: "welding", item: "Welding, WPS / PQR and welder qualification to ASME IX", defaults: { endUser: "-", client: "C", ramsis: "R" } },
-  { id: "nde", item: "Non-destructive examination (RT / UT / MT / PT)", defaults: { endUser: "I", client: "C", ramsis: "R" } },
-  { id: "hydro", item: "Hydrostatic test and dimensional inspection", defaults: { endUser: "I", client: "C", ramsis: "R" } },
-  { id: "pwht", item: "Post-weld heat treatment (where specified)", defaults: { endUser: "-", client: "C", ramsis: "R" } },
-  { id: "painting", item: "Surface preparation and protective painting", defaults: { endUser: "-", client: "C", ramsis: "R" } },
-  { id: "tpi", item: "Third-party inspection (TPI) and client witness points", defaults: { endUser: "I", client: "R", ramsis: "C" } },
-  { id: "internals", item: "Supply and fitting of internals (trays, demister, vortex breaker)", defaults: { endUser: "-", client: "C", ramsis: "R" } },
-  { id: "spares", item: "Pre-commissioning spares — 200% gaskets, 10% bolts and nuts", defaults: { endUser: "-", client: "I", ramsis: "R" } },
-  { id: "packing", item: "Seaworthy packing, marking and preservation", defaults: { endUser: "-", client: "I", ramsis: "R" } },
-  { id: "transport", item: "Transport from workshop to site", defaults: { endUser: "-", client: "A", ramsis: "R" } },
-  { id: "site", item: "Site installation, commissioning and insulation / fireproofing", defaults: { endUser: "R", client: "A", ramsis: "-" } },
+  {
+    id: "design",
+    group: "design",
+    item: "Mechanical design calculations to ASME VIII Div.1",
+    defaults: { endUser: "I", client: "A", ramsis: "R" },
+  },
+  {
+    id: "drawings",
+    group: "design",
+    item: "GA, detailed fabrication drawings, nozzle orientation, weld map and cutting plan",
+    defaults: { endUser: "I", client: "A", ramsis: "R" },
+  },
+  {
+    id: "asbuilt",
+    group: "design",
+    item: "As-built drawings and the final documentation dossier",
+    defaults: { endUser: "I", client: "C", ramsis: "R" },
+  },
+  {
+    id: "itp",
+    group: "design",
+    item: "Inspection and test plan (ITP) and quality dossier",
+    defaults: { endUser: "I", client: "A", ramsis: "R" },
+  },
+  {
+    id: "material",
+    group: "design",
+    item: "Raw material procurement, mill certification and traceability",
+    basis: "BOM-listed plates, heads, pipes, flanges, SRN nozzles and fasteners; final grades and quantities confirmed on the approved drawings.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "fabrication",
+    group: "design",
+    item: "Plate rolling, forming, shop fabrication, fit-up and assembly",
+    basis: "Cutting, forming, fit-up and welding to the approved drawings and procedures.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "welding",
+    group: "design",
+    item: "Welding, WPS / PQR and welder qualification to ASME IX",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "nde",
+    group: "design",
+    item: "Non-destructive examination (RT / UT / MT / PT)",
+    basis: "To the applicable ASME code, approved ITP and job specification. Additional coverage or special acceptance introduced after award is a commercial adjustment.",
+    defaults: { endUser: "I", client: "C", ramsis: "R" },
+  },
+  {
+    id: "hydro",
+    group: "design",
+    item: "Hydrostatic test and dimensional inspection",
+    defaults: { endUser: "I", client: "C", ramsis: "R" },
+  },
+  {
+    id: "special",
+    group: "design",
+    item: "Special testing — PMI, hardness, impact, ferrite and cladding bond",
+    basis: "Performed where supplementary tests are specified; other tests by agreement.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "pwht",
+    group: "design",
+    item: "Post-weld heat treatment (where specified)",
+    basis: "Per code, approved drawings and agreed specification; further cycles arising from later design revisions are a variation.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "painting",
+    group: "design",
+    item: "Surface preparation and protective painting",
+    basis: "Coating system, surface area, preparation grade and DFT to be agreed.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "stamp",
+    group: "design",
+    item: "ASME ‘U’ stamp design certification and National Board registration",
+    defaults: { endUser: "I", client: "C", ramsis: "R" },
+  },
+  {
+    id: "tpi",
+    group: "design",
+    item: "Third-party inspection (TPI) and client witness points",
+    basis: "TPI agency charges and client-appointed inspection are to the client's account; hold and witness points as agreed in the ITP.",
+    defaults: { endUser: "I", client: "R", ramsis: "C" },
+  },
+  {
+    id: "nameplate",
+    group: "design",
+    item: "Equipment name plate",
+    defaults: { endUser: "-", client: "I", ramsis: "R" },
+  },
+  {
+    id: "lugs",
+    group: "design",
+    item: "Lifting lugs, trunnions, external support cleats, rings and earthing lugs",
+    basis: "BOM-listed only; final arrangement per the approved drawings.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "saddles",
+    group: "design",
+    item: "Transportation saddles",
+    basis: "Where required for the agreed transport mode.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "internals",
+    group: "design",
+    item: "Supply and fitting of internals (trays, demister, vortex breaker, distributor pipes, support rings)",
+    basis: "BOM-listed internals only; catalyst and unlisted accessories are excluded.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "nitrogen",
+    group: "design",
+    item: "Nitrogen purging",
+    basis: "Where specified on the datasheet.",
+    defaults: { endUser: "-", client: "I", ramsis: "R" },
+  },
+  {
+    id: "spares",
+    group: "design",
+    item: "Pre-commissioning spares — 200% gaskets, 10% bolts and nuts",
+    defaults: { endUser: "-", client: "I", ramsis: "R" },
+  },
+  {
+    id: "mdr",
+    group: "design",
+    item: "Manufacturing record book (MDR)",
+    basis: "Agreed drawings, material certificates and inspection records, issued in PDF.",
+    defaults: { endUser: "-", client: "A", ramsis: "R" },
+  },
+  {
+    id: "packing",
+    group: "design",
+    item: "Seaworthy packing, marking and preservation",
+    basis: "Suitable for the quoted Incoterm; export crating as a separately agreed option.",
+    defaults: { endUser: "-", client: "I", ramsis: "R" },
+  },
+  {
+    id: "transport",
+    group: "design",
+    item: "Transport from workshop to site",
+    basis: "Per the quoted Incoterm; unloading and site storage by others.",
+    defaults: { endUser: "-", client: "A", ramsis: "R" },
+  },
+  {
+    id: "pm",
+    group: "design",
+    item: "Project management, expediting and progress reporting",
+    defaults: { endUser: "I", client: "A", ramsis: "R" },
+  },
+  {
+    id: "site",
+    group: "design",
+    item: "Site installation, commissioning and insulation / fireproofing",
+    basis: "By others; support clips are supplied and welded. Insulation and refractory excluded unless added by written agreement.",
+    defaults: { endUser: "R", client: "A", ramsis: "-" },
+  },
+  {
+    id: "lifting",
+    group: "design",
+    item: "Lifting tools and tackles for site erection",
+    basis: "By others; the equipment's own lifting lugs are in our scope.",
+    defaults: { endUser: "R", client: "I", ramsis: "-" },
+  },
+  {
+    id: "fabeng",
+    group: "fabrication",
+    item: "Fabrication engineering — shop drawings, weld maps and fabrication procedures",
+    basis: "Based on the client-approved design; shop procedures and weld maps by the fabricator.",
+    defaults: { endUser: "I", client: "R", ramsis: "C" },
+  },
+  {
+    id: "cladding",
+    group: "fabrication",
+    item: "Cladding indicated in the BOM",
+    basis: "Plate and head cladding as listed; method, coverage and inspection to be agreed.",
+    defaults: { endUser: "-", client: "R", ramsis: "C" },
+  },
+  {
+    id: "supports",
+    group: "fabrication",
+    item: "Supports and attachments beyond the BOM",
+    basis: "BOM-listed saddle, skirt, ring and lug components only; final arrangement per the drawings.",
+    defaults: { endUser: "-", client: "R", ramsis: "C" },
+  },
+  {
+    id: "consumables",
+    group: "fabrication",
+    item: "Fabrication consumables",
+    basis: "Welding and grinding consumables for the agreed shop scope.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "traceqc",
+    group: "fabrication",
+    item: "Material traceability and shop quality control",
+    basis: "Certificate review, identification, visual and dimensional inspection.",
+    defaults: { endUser: "I", client: "C", ramsis: "R" },
+  },
+  {
+    id: "preservation",
+    group: "fabrication",
+    item: "Basic preservation and identification",
+    basis: "Temporary protection, flange covers, tagging and loose-item identification; export packing is covered above.",
+    defaults: { endUser: "-", client: "I", ramsis: "R" },
+  },
 ];
 
 export const scopeMark = (settings: ProposalSettings, row: ScopeRowDef, party: ScopeParty): ScopeMark => {
@@ -74,6 +300,8 @@ export interface DocTable {
   align?: ("left" | "right" | "center")[];
   /** the last row is a total — render it emphasised */
   emphasiseLast?: boolean;
+  /** full-width band rows inserted before the given row index */
+  bands?: { before: number; title: string }[];
 }
 
 export interface DocSubsection {
@@ -368,13 +596,23 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const tags = equipment.map((e) => `${e.tag} (${e.name})`).join(", ");
   const dateText = dateLabel(settings.date);
 
+  // one row per scope item, with a band wherever the group changes
+  const scopeBands: { before: number; title: string }[] = [];
+  SCOPE_ROWS.forEach((row, i) => {
+    if (i === 0 || SCOPE_ROWS[i - 1].group !== row.group) {
+      scopeBands.push({ before: i, title: SCOPE_GROUPS.find((g) => g.id === row.group)?.title ?? row.group });
+    }
+  });
+
   const scopeTable: DocTable = {
-    head: ["#", "Scope item", "End user", "Client (EPC)", "Ramsis"],
-    widths: [0.5, 6, 1.2, 1.4, 1.2],
-    align: ["center", "left", "center", "center", "center"],
+    head: ["#", "Scope item", "Basis or limit", "End user", "Client (EPC)", "Ramsis"],
+    widths: [0.4, 3.4, 3.5, 0.65, 0.8, 0.65],
+    align: ["center", "left", "left", "center", "center", "center"],
+    bands: scopeBands,
     rows: SCOPE_ROWS.map((row, i) => [
       String(i + 1),
       row.item,
+      row.basis ?? "",
       scopeMark(settings, row, "endUser"),
       scopeMark(settings, row, "client"),
       scopeMark(settings, row, "ramsis"),
@@ -489,7 +727,8 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   add("Scope matrix — end user, client and Ramsis", {
     table: scopeTable,
     paragraphs: [
-      "The matrix below fixes who does what between the three parties to this offer. The end user owns the plant and is the ultimate approver of the equipment specification; the client (EPC) issues the purchase order and administers the contract; Ramsis Engineering designs, manufactures, tests and delivers the equipment.",
+      "The matrix fixes who does what between the three parties to this offer. The end user owns the plant and is the ultimate approver of the equipment specification; the client (EPC) issues the purchase order and administers the contract; Ramsis Engineering designs, manufactures, tests and delivers the equipment.",
+      "Process design and guarantees are carried in full by Ramsis. Fabrication engineering and shop-level scope retained by the client or its nominated fabricator are listed separately, each with the basis or limit that applies, so no line is claimed twice.",
       "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
     ],
   });
