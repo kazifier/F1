@@ -153,8 +153,13 @@ export default function ProposalPage() {
             <Field label="Validity (days)"><input type="number" value={proposal.validityDays} onChange={(e) => setProposal({ validityDays: Number(e.target.value) })} /></Field>
             <Field label="Delivery (weeks)"><input type="number" value={proposal.deliveryWeeks} onChange={(e) => setProposal({ deliveryWeeks: Number(e.target.value) })} /></Field>
             <Field label="Payment period (days)"><input type="number" value={proposal.paymentDays} onChange={(e) => setProposal({ paymentDays: Number(e.target.value) })} /></Field>
-            <Field label="Advance with PO (%)"><input type="number" step="1" value={proposal.advancePct} onChange={(e) => setProposal({ advancePct: Number(e.target.value) })} /></Field>
-            <Field label="Design approval (%)"><input type="number" step="1" value={proposal.designPct} onChange={(e) => setProposal({ designPct: Number(e.target.value) })} /></Field>
+            <div className="field" style={{ gridColumn: "span 2" }}>
+              <label>Payment terms (fixed in the offer)</label>
+              <div style={{ fontSize: 12, color: "#667080" }}>
+                10% advance with PO · 15% on design approval · material receipts sized to cover the material content ·
+                5% on the MDR. Retention is set under the payment schedule.
+              </div>
+            </div>
             <Field label="Warranty (months / ex-works)"><div style={{ display: "flex", gap: 6 }}>
               <input type="number" value={proposal.warrantyMonths} onChange={(e) => setProposal({ warrantyMonths: Number(e.target.value) })} />
               <input type="number" value={proposal.warrantyExWeeks} onChange={(e) => setProposal({ warrantyExWeeks: Number(e.target.value) })} />
@@ -304,20 +309,19 @@ export default function ProposalPage() {
         </div>
         <div className="card-body tight scroll-x">
           <table className="data" style={{ minWidth: 720 }}>
-            <thead><tr><th>No</th><th>Milestone</th><th>Type</th><th className="num">%</th><th className="num">Amount</th></tr></thead>
+            <thead><tr><th>No</th><th>Milestone</th><th className="num">%</th><th className="num">Amount</th></tr></thead>
             <tbody>
               {doc.payment.map((p) => (
                 <tr key={p.no}>
                   <td className="num">{p.no}</td>
                   <td>{p.trigger}</td>
-                  <td><span className="pill">{p.kind}</span></td>
                   <td className="num">{p.pct.toFixed(1)}%</td>
                   <td className="num">{priced ? money(p.amount) : "—"}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
-              <tr><td colSpan={3}>Total</td><td className="num">{doc.payment.reduce((a, p) => a + p.pct, 0).toFixed(1)}%</td><td className="num">{priced ? money(doc.payment.reduce((a, p) => a + p.amount, 0)) : "—"}</td></tr>
+              <tr><td colSpan={2}>Total</td><td className="num">{doc.payment.reduce((a, p) => a + p.pct, 0).toFixed(1)}%</td><td className="num">{priced ? money(doc.payment.reduce((a, p) => a + p.amount, 0)) : "—"}</td></tr>
             </tfoot>
           </table>
         </div>

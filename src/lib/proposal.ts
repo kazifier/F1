@@ -551,22 +551,27 @@ function buildPayment(
   grand: number,
 ): { payment: PaymentMilestone[]; coverage: MaterialCoverage } {
   const materialPct = grand > 0 ? (material / grand) * 100 : 0;
-  const pct = (v: number | undefined, fallback: number) => (Number.isFinite(v) ? Math.max(0, v as number) : fallback);
   const r1 = (v: number) => Math.round(v * 10) / 10;
 
-  const advance = pct(settings.advancePct, 10);
-  const design = pct(settings.designPct, 10);
+  // contractual terms, fixed by the offer: 10% advance, 15% on design, 5% on the MDR
+  const advance = 10;
+  const design = 15;
+  const mdr = 5;
   // retention sits at the bottom of the schedule, released on final acceptance
-  const retention = Math.min(pct(settings.retentionPct, 0), Math.max(0, 100 - advance - design));
-  // the advance and the material-receipt payment must recover the full material content
-  const materialReceipt = r1(Math.max(0, Math.min(materialPct - advance, 100 - advance - design - retention)));
-  // monthly progress, hydro test, dispatch and the MDR share what is left
-  const pool = Math.max(0, r1(100 - advance - design - materialReceipt - retention));
-  const monthly = r1(pool * 0.35);
-  const hydro = r1(pool * 0.15);
-  const dispatchStage = r1(pool * 0.3);
-  // rounding correction lands on the MDR so the schedule totals 100%
-  const mdr = r1(Math.max(0, pool - monthly - hydro - dispatchStage));
+  const retention = Math.min(
+    Math.max(0, Number.isFinite(settings.retentionPct) ? settings.retentionPct : 0),
+    Math.max(0, 100 - advance - design - mdr),
+  );
+  // the material-receipt payment carries whatever the advance leaves of the material content
+  const materialReceipt = r1(
+    Math.max(0, Math.min(materialPct - advance, 100 - advance - design - mdr - retention)),
+  );
+  // monthly progress, hydro test and dispatch share the remaining balance
+  const balance = Math.max(0, r1(100 - advance - design - materialReceipt - mdr - retention));
+  const monthly = r1(balance * 0.6);
+  const hydro = r1(balance * 0.1);
+  // dispatch absorbs the rounding so the schedule totals 100%
+  const dispatchStage = r1(Math.max(0, balance - monthly - hydro));
 
   const rows: PaymentMilestone[] = [
     { no: 1, trigger: "Advance along with the purchase order", kind: "Material", pct: advance, amount: 0 },
@@ -835,19 +840,13 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const retentionPct = Number.isFinite(settings.retentionPct) ? Math.max(0, settings.retentionPct) : 0;
 
   const paymentTable: DocTable = {
-    head: ["No", "Milestone", "Type", "%", "Amount"],
-    widths: [0.4, 6, 1.1, 0.8, 1.5],
-    align: ["center", "left", "center", "right", "right"],
+    head: ["No", "Milestone", "%", "Amount"],
+    widths: [0.4, 6.6, 1.0, 1.6],
+    align: ["center", "left", "right", "right"],
     emphasiseLast: true,
     rows: [
-      ...payment.map((p) => [
-        String(p.no),
-        p.trigger,
-        p.kind,
-        `${fmtNum(p.pct, 1)}%`,
-        priced ? money(p.amount) : "—",
-      ]),
-      ["", "Total", "", `${fmtNum(payment.reduce((a, p) => a + p.pct, 0), 1)}%`, priced ? money(grand) : "—"],
+      ...payment.map((p) => [String(p.no), p.trigger, `${fmtNum(p.pct, 1)}%`, priced ? money(p.amount) : "—"]),
+      ["", "Total", `${fmtNum(payment.reduce((a, p) => a + p.pct, 0), 1)}%`, priced ? money(grand) : "—"],
     ],
   };
 
@@ -1067,9 +1066,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       paragraphs: [
         `Payment terms are structured so that 100% of the material cost is recovered through material payments before fabrication starts. The material content of this price is ${money(material)} (${fmtNum(coverage.materialPct, 1)}% of the quoted value); material milestones ${materialNos} total ${fmtNum(coverage.materialPaidPct, 1)}% of the price${priced ? ` — ${money(coverage.materialPaid)}` : ""}.`,
         "All payments are released against the milestone evidence stated below; material payments are supported by unpriced purchase order copies and mill certificates.",
-        ...(retentionPct > 0
-          ? [`A retention of ${fmtNum(retentionPct, 1)}% is withheld from the milestones and released on the final acceptance certificate.`]
-          : []),
+        `The advance is 10% with the purchase order, 15% on approval of the design and drawings, and 5% on the final documentation dossier (MDR).${retentionPct > 0 ? ` A retention of ${fmtNum(retentionPct, 1)}% is withheld from the milestones and released on the final acceptance certificate.` : ""}`,
       ],
       table: paymentTable,
       note: coverage.covered

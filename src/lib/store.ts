@@ -313,8 +313,6 @@ const defaultProposal: ProposalSettings = {
   validityDays: 30,
   deliveryWeeks: 40,
   paymentDays: 30,
-  advancePct: 10,
-  designPct: 10,
   retentionPct: 0,
   warrantyMonths: 12,
   warrantyExWeeks: 18,
@@ -496,7 +494,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "vessel-estimator-v1",
-      version: 8,
+      version: 9,
       migrate: (persisted: unknown, version: number) => {
         const s = persisted as { equipment?: Equipment[] } & Record<string, unknown>;
         // v7: proposal preparation settings
@@ -510,6 +508,15 @@ export const useStore = create<AppState>()(
           const merged = { ...defaultProposal, ...(st.proposal ?? {}) };
           delete (merged as unknown as Record<string, unknown>).materialPoPct;
           st.proposal = merged;
+        }
+        // v9: advance, design approval and the MDR are fixed terms of the offer
+        if (version < 9) {
+          const st = s as { proposal?: Partial<ProposalSettings> };
+          const merged = { ...defaultProposal, ...(st.proposal ?? {}) } as unknown as Record<string, unknown>;
+          delete merged.advancePct;
+          delete merged.designPct;
+          delete merged.materialPoPct;
+          st.proposal = merged as unknown as ProposalSettings;
         }
         // v3: rate book moved from INR benchmarks to BHD, currency is now a display setting
         // v6: the workshop is in Bahrain, so Bahrain is the default supply country

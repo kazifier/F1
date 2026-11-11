@@ -215,9 +215,6 @@ export interface ProposalSettings {
   validityDays: number;
   deliveryWeeks: number;
   paymentDays: number;
-  advancePct: number;
-  /** payment released on approval of the design and drawings */
-  designPct: number;
   /** retention withheld from the milestones and released on final acceptance */
   retentionPct: number;
   warrantyMonths: number;
