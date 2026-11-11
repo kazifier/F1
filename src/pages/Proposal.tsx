@@ -172,7 +172,7 @@ export default function ProposalPage() {
           <span className="hint">two blocks · basis or limit per line · R / A / C / I / “-”</span>
         </div>
         <div className="card-body tight scroll-x">
-          <table className="data">
+          <table className="data" style={{ minWidth: 940 }}>
             <thead>
               <tr>
                 <th>#</th>
