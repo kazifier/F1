@@ -499,25 +499,66 @@ function buildPayment(
   const materialPct = grand > 0 ? (material / grand) * 100 : 0;
   const r1 = (v: number) => Math.round(v * 10) / 10;
 
+  // every milestone is quoted on a round step: a whole percent that is a multiple of 2 or of 5
+  const roundStep = (v: number) => v >= 0 && (v % 2 === 0 || v % 5 === 0);
+  const nearestStep = (v: number) => {
+    if (v <= 1) return 0;
+    const base = Math.round(v);
+    for (let d = 0; d <= 10; d += 1) {
+      if (roundStep(base + d)) return base + d;
+      if (base - d > 0 && roundStep(base - d)) return base - d;
+    }
+    return base;
+  };
+  const ceilStep = (v: number) => {
+    let c = Math.max(0, Math.ceil(v - 1e-9));
+    while (!roundStep(c)) c += 1;
+    return c;
+  };
+
   // contractual terms, fixed by the offer: 10% advance, 15% on design, 5% on the MDR
   const advance = 10;
   const design = 15;
   const mdr = 5;
   // retention sits at the bottom of the schedule, released on final acceptance
   const retention = Math.min(
-    Math.max(0, Number.isFinite(settings.retentionPct) ? settings.retentionPct : 0),
+    nearestStep(Math.max(0, Number.isFinite(settings.retentionPct) ? settings.retentionPct : 0)),
     Math.max(0, 100 - advance - design - mdr),
   );
-  // the material-receipt payment carries whatever the advance leaves of the material content
-  const materialReceipt = r1(
-    Math.max(0, Math.min(materialPct - advance, 100 - advance - design - mdr - retention)),
-  );
-  // monthly progress, hydro test and dispatch share the remaining balance
-  const balance = Math.max(0, r1(100 - advance - design - materialReceipt - mdr - retention));
-  const monthly = r1(balance * 0.6);
-  const hydro = r1(balance * 0.1);
-  // dispatch absorbs the rounding so the schedule totals 100%
-  const dispatchStage = r1(Math.max(0, balance - monthly - hydro));
+
+  // the balance is shared out monthly, on the hydro test and before dispatch, each on a round step
+  const splitBalance = (total: number): [number, number, number] | null => {
+    const m0 = nearestStep(total * 0.6);
+    const h0 = nearestStep(total * 0.1);
+    for (let dm = -8; dm <= 8; dm += 2) {
+      for (let dh = -4; dh <= 4; dh += 2) {
+        const monthly = m0 + dm;
+        const hydro = h0 + dh;
+        const dispatch = total - monthly - hydro;
+        if (monthly < 0 || hydro < 0 || dispatch < 0) continue;
+        if (roundStep(monthly) && roundStep(hydro) && roundStep(dispatch)) return [monthly, hydro, dispatch];
+      }
+    }
+    return null;
+  };
+
+  // the material receipt carries whatever the advance leaves of the material content, rounded up
+  // so the material is never left short; the first round step that also splits cleanly wins
+  const headroom = 100 - advance - design - mdr - retention;
+  const need = Math.max(0, materialPct - advance);
+  let materialReceipt = 0;
+  let parts = splitBalance(headroom) ?? [0, 0, 0];
+  for (let step = ceilStep(need); step <= headroom; step += 1) {
+    if (!roundStep(step)) continue;
+    const rest = headroom - step;
+    if (rest < 6) break;
+    const split = splitBalance(rest);
+    if (!split) continue;
+    materialReceipt = step;
+    parts = split;
+    break;
+  }
+  const [monthly, hydro, dispatchStage] = parts;
 
   const rows: PaymentMilestone[] = [
     { no: 1, trigger: "Advance along with the purchase order", kind: "Material", pct: advance, amount: 0 },
@@ -723,7 +764,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   if (freight > 0) {
     priceRows.push({
       tag: "—",
-      description: `Packing, freight, insurance and destination clearing to ${destinationOf(logistics.destination).name} (${logistics.incoterm})`,
+      description: `Packing, freight and insurance to ${destinationOf(logistics.destination).name} (${logistics.incoterm})`,
       qty: 1,
       weight: 0,
       unitPrice: freight,
@@ -766,7 +807,9 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       ]),
       [
         "",
-        "Total — quoted price, excluding VAT",
+        logistics.incoterm === "EXW"
+          ? "Total — ex-works price, excluding VAT"
+          : "Total — quoted price incl. delivery, excluding VAT",
         "",
         fmtInt(weight),
         "",
@@ -969,7 +1012,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       ],
       table: paymentTable,
       note: coverage.covered
-        ? "Material is fully funded by the material milestones — no material is carried by Ramsis into fabrication."
+        ? undefined
         : "Warning: the material milestones do not yet cover the material content — increase the advance or the material release percentage.",
     });
 
