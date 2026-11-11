@@ -227,7 +227,7 @@ export default function ProposalPage() {
       <div className="card">
         <div className="card-head">
           <h3>Scope matrix — end user, client and Ramsis</h3>
-          <span className="hint">two blocks · in shop-route order · basis under each line · R / A / C / I / “-”</span>
+          <span className="hint">one block · in shop-route order · basis under each line · R / A / C / I / “-”</span>
         </div>
         <div className="card-body tight scroll-x">
           <table className="data" style={{ minWidth: 760 }}>

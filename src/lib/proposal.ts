@@ -45,11 +45,6 @@ export const SCOPE_GROUPS: ScopeGroupDef[] = [
     title: "Process design and guarantees",
     note: "Engineering, manufacture, testing and delivery by Ramsis Engineering at the Sitra workshop.",
   },
-  {
-    id: "fabrication",
-    title: "Fabrication engineering and shop limits",
-    note: "Shop-level scope retained by the client or its nominated fabricator, and the basis or limit that applies to it.",
-  },
 ];
 
 export interface ScopeRowDef {
@@ -244,54 +239,11 @@ const SCOPE_DEFS: ScopeRowDef[] = [
     basis: "By others; the equipment's own lifting lugs are in our scope.",
     defaults: { endUser: "R", client: "I", ramsis: "-" },
   },
-  {
-    id: "fabeng",
-    group: "fabrication",
-    item: "Fabrication engineering — shop drawings, weld maps and fabrication procedures",
-    basis: "Based on the client-approved design; shop procedures and weld maps by the fabricator.",
-    defaults: { endUser: "I", client: "R", ramsis: "C" },
-  },
-  {
-    id: "cladding",
-    group: "fabrication",
-    item: "Cladding indicated in the BOM",
-    basis: "Plate and head cladding as listed; method, coverage and inspection to be agreed.",
-    defaults: { endUser: "-", client: "R", ramsis: "C" },
-  },
-  {
-    id: "supports",
-    group: "fabrication",
-    item: "Supports and attachments beyond the BOM",
-    basis: "BOM-listed saddle, skirt, ring and lug components only; final arrangement per the drawings.",
-    defaults: { endUser: "-", client: "R", ramsis: "C" },
-  },
-  {
-    id: "consumables",
-    group: "fabrication",
-    item: "Fabrication consumables",
-    basis: "Welding and grinding consumables for the agreed shop scope.",
-    defaults: { endUser: "-", client: "C", ramsis: "R" },
-  },
-  {
-    id: "traceqc",
-    group: "fabrication",
-    item: "Material traceability and shop quality control",
-    basis: "Certificate review, identification, visual and dimensional inspection.",
-    defaults: { endUser: "I", client: "C", ramsis: "R" },
-  },
-  {
-    id: "preservation",
-    group: "fabrication",
-    item: "Basic preservation and identification",
-    basis: "Temporary protection, flange covers, tagging and loose-item identification; export packing is covered above.",
-    defaults: { endUser: "-", client: "I", ramsis: "R" },
-  },
 ];
 
 /**
  * The order the matrix is printed in: the sequence in which the work actually
- * happens on the shop route, from process design through to dispatch, followed
- * by the shop-level block.
+ * happens on the shop route, from process design through to dispatch.
  */
 const SCOPE_SEQUENCE = [
   "process",
@@ -321,12 +273,6 @@ const SCOPE_SEQUENCE = [
   "transport",
   "site",
   "lifting",
-  "fabeng",
-  "cladding",
-  "supports",
-  "consumables",
-  "traceqc",
-  "preservation",
 ];
 
 export const SCOPE_ROWS: ScopeRowDef[] = SCOPE_SEQUENCE.map((id) => {
