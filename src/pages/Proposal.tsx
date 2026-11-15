@@ -1,13 +1,13 @@
 import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore, fmtInt, money } from "../lib/store";
-import { buildProposal, SCOPE_ROWS, SCOPE_MARKS, scopeMark } from "../lib/proposal";
+import { buildProposal, SCOPE_NUMBERS, SCOPE_ROWS, scopeMark } from "../lib/proposal";
 import { exportProposalDocx } from "../lib/proposalDocx";
 import { exportProposalPdf, proposalPdfUrl } from "../lib/proposalPdf";
 import type { OfferType, ScopeParty } from "../lib/types";
 
 const OFFER_TYPES: OfferType[] = ["Techno-Commercial", "Technical", "Commercial", "Unpriced Commercial"];
+// the end user's responsibility is carried inside the client column
 const PARTIES: { party: ScopeParty; label: string }[] = [
-  { party: "endUser", label: "End user" },
   { party: "client", label: "Client" },
   { party: "ramsis", label: "Ramsis" },
 ];
@@ -129,11 +129,10 @@ export default function ProposalPage() {
         </div>
 
         <div className="card">
-          <div className="card-head"><h3>Parties</h3><span className="hint">end user, EPC client and Ramsis</span></div>
+          <div className="card-head"><h3>Parties</h3><span className="hint">client and Ramsis</span></div>
           <div className="card-body">
             <div className="grid g2">
               <Field label="Client (issues the PO / EPC)"><input value={proposal.client} onChange={(e) => setProposal({ client: e.target.value })} placeholder={project.client} /></Field>
-              <Field label="End user (plant owner)"><input value={proposal.endUser} onChange={(e) => setProposal({ endUser: e.target.value })} placeholder="where the equipment is installed" /></Field>
               <Field label="Client address" wide><input value={proposal.clientAddress} onChange={(e) => setProposal({ clientAddress: e.target.value })} placeholder={project.location} /></Field>
               <Field label="Ramsis contact"><input value={proposal.preparedBy} onChange={(e) => setProposal({ preparedBy: e.target.value })} /></Field>
               <Field label="Role"><input value={proposal.preparedRole} onChange={(e) => setProposal({ preparedRole: e.target.value })} /></Field>
@@ -254,8 +253,8 @@ export default function ProposalPage() {
 
       <div className="card">
         <div className="card-head">
-          <h3>Scope matrix — end user, client and Ramsis</h3>
-          <span className="hint">one block · in shop-route order · basis under each line · R / A / C / I / “-”</span>
+          <h3>Scope matrix — client and Ramsis</h3>
+          <span className="hint">one block · in shop-route order · basis under each line · ✓ in scope · — not in scope</span>
         </div>
         <div className="card-body tight scroll-x">
           <table className="data" style={{ minWidth: 760 }}>
@@ -268,11 +267,17 @@ export default function ProposalPage() {
             </thead>
             <tbody>
               {SCOPE_ROWS.map((row, i) => {
+                const included = (party: ScopeParty) =>
+                  party === "client"
+                    ? scopeMark(proposal, row, "client") !== "-" || scopeMark(proposal, row, "endUser") !== "-"
+                    : scopeMark(proposal, row, party) !== "-";
                 return (
                   <Fragment key={row.id}>
                     <tr>
-                      <td className="num">{i + 1}</td>
-                      <td>
+                      <td className="num" style={row.parent ? { color: "#667080" } : undefined}>
+                        {SCOPE_NUMBERS[i]}
+                      </td>
+                      <td style={row.parent ? { paddingLeft: 24 } : undefined}>
                         {row.item}
                         {row.basis && (
                           <div style={{ fontSize: 11, color: "#667080", marginTop: 2, lineHeight: 1.35 }}>
@@ -284,12 +289,18 @@ export default function ProposalPage() {
                         <td key={p.party} className="num">
                           <select
                             className="btn"
-                            style={{ padding: "1px 2px", fontSize: 11, minWidth: 54 }}
-                            value={scopeMark(proposal, row, p.party)}
-                            onChange={(e) => setScopeCell(row.id, p.party, e.target.value)}
-                            title={SCOPE_MARKS.find((m) => m.mark === scopeMark(proposal, row, p.party))?.label}
+                            style={{ padding: "1px 2px", fontSize: 12, minWidth: 48, textAlign: "center" }}
+                            value={included(p.party) ? "✓" : "-"}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              // the client cell carries the end user as well
+                              setScopeCell(row.id, p.party, v);
+                              if (p.party === "client") setScopeCell(row.id, "endUser", v);
+                            }}
+                            title={included(p.party) ? "In scope" : "Not in scope"}
                           >
-                            {SCOPE_MARKS.map((m) => <option key={m.mark} value={m.mark}>{m.mark === "-" ? "—" : m.mark}</option>)}
+                            <option value="✓">✓</option>
+                            <option value="-">—</option>
                           </select>
                         </td>
                       ))}
@@ -303,8 +314,10 @@ export default function ProposalPage() {
         <div className="est-note">
           Lines follow the sequence of the work itself — process design and datasheet first, then engineering,
           procurement, fabrication, inspection and testing, finishing and dispatch. The basis or limit is printed under
-          each line in the offer, so each activity is claimed once. The end user is the plant owner, the client is the
-          EPC that issues the purchase order, and Ramsis designs, manufactures, tests and delivers.
+          each line in the offer, so each activity is claimed once. The client column carries the end user, since the
+          plant owner sits behind the EPC that issues the purchase order; a tick means the line is in that party's scope,
+          an em dash means it is not. The internals line is split so each item — trays, demister, vortex breaker,
+          distributor pipes and support rings — is ticked on its own.
         </div>
       </div>
 

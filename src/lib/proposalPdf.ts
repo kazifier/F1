@@ -138,9 +138,27 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
         pdf.setTextColor(...textColor);
         const align = t.align?.[i] ?? "left";
         const tx = align === "right" ? x + cols[i] - padX : align === "center" ? x + cols[i] / 2 : x + padX;
-        lines[i].slice(0, 5).forEach((line, li) => {
-          pdf.text(line, tx, y + padY + size + li * lead, { align });
-        });
+        if (cells[i].trim() === "✓") {
+          // the standard PDF faces carry no tick glyph — draw it as two strokes
+          const cx0 = align === "right" ? x + cols[i] - padX - size * 0.6 : align === "center" ? x + cols[i] / 2 : x + padX + size * 0.6;
+          const cy0 = y + h / 2 + size * 0.12;
+          pdf.setDrawColor(...ACCENT);
+          pdf.setLineWidth(1.4);
+          pdf.lines(
+            [
+              [size * 0.26, -size * 0.3],
+              [size * 0.44, size * 0.64],
+            ],
+            cx0 - size * 0.38,
+            cy0,
+            [1, 1],
+            "S",
+          );
+        } else {
+          lines[i].slice(0, 5).forEach((line, li) => {
+            pdf.text(line, tx, y + padY + size + li * lead, { align });
+          });
+        }
         if (sub?.[i]?.length) {
           pdf.setFont("helvetica", "normal");
           pdf.setFontSize(subSize);
@@ -290,10 +308,13 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
 
   y = bandH + 24;
   const gap = 9;
-  const colW = (WIDTH - gap * 2) / 3;
+  const colW = (WIDTH - gap) / 2;
   const parties = [
-    { label: "End user", value: offer.endUser || "—", detail: "Plant owner / site" },
-    { label: "Client (EPC)", value: offer.client || "—", detail: offer.clientAddress || "Issues the purchase order" },
+    {
+      label: "Client",
+      value: offer.client || "—",
+      detail: offer.clientAddress || "Issues the purchase order",
+    },
     { label: "Ramsis Engineering", value: "Askar, Bahrain", detail: "Design · fabrication · supply" },
   ];
   parties.forEach((p, i) => {

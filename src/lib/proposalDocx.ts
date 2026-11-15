@@ -60,6 +60,14 @@ interface ParaOpts extends RunOpts {
 
 function run(text: string, o: RunOpts = {}): string {
   const sz = Math.round((o.size ?? 10) * 2);
+  // the scope matrix marks inclusion with a tick, which Calibri does not carry
+  if (text.trim() === "✓") {
+    return (
+      `<w:r><w:rPr><w:rFonts w:ascii="Segoe UI Symbol" w:hAnsi="Segoe UI Symbol" w:cs="Segoe UI Symbol"/>` +
+      `<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:b/><w:color w:val="${o.color ?? INK}"/></w:rPr>` +
+      `<w:t>✓</w:t></w:r>`
+    );
+  }
   const rPr =
     `<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>` +
     `<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/>` +
@@ -307,7 +315,7 @@ function buildDocument(doc: ProposalDoc): string {
   // ---- cover letter ---------------------------------------------------------
   out.push(titleBand(doc.title, `${doc.offerNo}  ·  Rev. ${doc.revision}  ·  ${doc.dateLabel}`));
 
-  const partyWidth = Math.round(USABLE / 3);
+  const partyWidth = Math.round(USABLE / 2);
   const partyCell = (label: string, value: string, detail?: string) =>
     cellBlocks(
       [
@@ -331,13 +339,13 @@ function buildDocument(doc: ProposalDoc): string {
       "insideV",
     ]
       .map((s) => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="${RULE}"/>`)
-      .join("")}</w:tblBorders></w:tblPr><w:tblGrid>${[0, 1, 2]
+      .join("")}</w:tblBorders></w:tblPr><w:tblGrid>${[0, 1]
       .map(() => `<w:gridCol w:w="${partyWidth}"/>`)
       .join("")}</w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>${partyCell(
-      "End user",
-      doc.endUser,
-      "Plant owner / installation site",
-    )}${partyCell("Client (EPC)", doc.client, doc.clientAddress || "Issues the purchase order")}${partyCell(
+      "Client",
+      doc.client,
+      doc.clientAddress || "Issues the purchase order",
+    )}${partyCell(
       "Ramsis Engineering",
       "Askar, Kingdom of Bahrain",
       "Design · fabrication · supply",

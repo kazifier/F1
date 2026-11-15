@@ -49,6 +49,8 @@ export const SCOPE_GROUPS: ScopeGroupDef[] = [
 
 export interface ScopeRowDef {
   id: string;
+  /** sub-row of the numbered line with this id — printed as 11.1, 11.2, … */
+  parent?: string;
   item: string;
   group: ScopeGroupId;
   /** basis, limit or exclusion printed against the line */
@@ -181,8 +183,48 @@ const SCOPE_DEFS: ScopeRowDef[] = [
   {
     id: "internals",
     group: "design",
-    item: "Supply and fitting of internals (trays, demister, vortex breaker, distributor pipes, support rings)",
+    item: "Supply and fitting of internals",
     basis: "BOM-listed internals only; catalyst and unlisted accessories are excluded.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "internals.trays",
+    parent: "internals",
+    group: "design",
+    item: "Trays",
+    basis: "BOM-listed trays, downcomers and tray supports; packing and catalyst excluded.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "internals.demister",
+    parent: "internals",
+    group: "design",
+    item: "Demister",
+    basis: "BOM-listed mist eliminator, its support grid and the hold-down bars.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "internals.vortex",
+    parent: "internals",
+    group: "design",
+    item: "Vortex breaker",
+    basis: "BOM-listed vortex breaker, fitted and welded at the outlet.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "internals.distributor",
+    parent: "internals",
+    group: "design",
+    item: "Distributor pipes",
+    basis: "BOM-listed inlet distributor, branches and their supports.",
+    defaults: { endUser: "-", client: "C", ramsis: "R" },
+  },
+  {
+    id: "internals.rings",
+    parent: "internals",
+    group: "design",
+    item: "Support rings",
+    basis: "BOM-listed support rings, clips and their welds to the shell.",
     defaults: { endUser: "-", client: "C", ramsis: "R" },
   },
   {
@@ -257,6 +299,11 @@ const SCOPE_SEQUENCE = [
   "lugs",
   "saddles",
   "internals",
+  "internals.trays",
+  "internals.demister",
+  "internals.vortex",
+  "internals.distributor",
+  "internals.rings",
   "nde",
   "pwht",
   "hydro",
@@ -280,6 +327,25 @@ export const SCOPE_ROWS: ScopeRowDef[] = SCOPE_SEQUENCE.map((id) => {
   if (!row) throw new Error(`scope row ${id} is missing from SCOPE_DEFS`);
   return row;
 });
+
+/**
+ * Printed row numbers: plain lines run 1, 2, 3 … and the internals sub-rows
+ * keep the number of their parent, so trays are 11.1 and support rings 11.5.
+ */
+export const SCOPE_NUMBERS: string[] = (() => {
+  const mains: Record<string, number> = {};
+  const subs: Record<string, number> = {};
+  let n = 0;
+  return SCOPE_ROWS.map((row) => {
+    if (row.parent) {
+      subs[row.parent] = (subs[row.parent] ?? 0) + 1;
+      return `${mains[row.parent]}.${subs[row.parent]}`;
+    }
+    n += 1;
+    mains[row.id] = n;
+    return String(n);
+  });
+})();
 
 export const scopeMark = (settings: ProposalSettings, row: ScopeRowDef, party: ScopeParty): ScopeMark => {
   const set = settings.scope?.[`${row.id}|${party}`];
@@ -746,9 +812,9 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   };
 
   const clientName = settings.client.trim() || project.client;
-  const endUserName = settings.endUser.trim() || project.client;
-  // a name that already ends in a full stop must not produce "Ltd.." in a sentence
-  const endUserClean = endUserName.replace(/\.\s*$/, "");
+  // one counterparty only: the client carries the end user, so the offer does
+  // not name the plant owner as a separate party anywhere
+  const endUserClean = clientName.replace(/\.\s*$/, "");
   const subject =
     settings.subject.trim() ||
     `supply of ${equipment.map((e) => e.name).filter(Boolean).slice(0, 3).join(", ")}${equipment.length > 3 ? " and associated equipment" : ""}`;
@@ -756,18 +822,21 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const tags = equipment.map((e) => `${e.tag} (${e.name})`).join(", ");
   const dateText = dateLabel(settings.date);
 
-  // the basis or limit sits under the item, in the same column, in a smaller face
+  // the basis or limit sits under the item, in the same column, in a smaller
+  // face; a tick means the line is in scope for that party, a blank cell means
+  // it is not. The end user's responsibility is carried inside the client
+  // column, so the matrix names only the two parties that deal with each other.
+  const included = (marks: ScopeMark[]) => (marks.some((m) => m !== "-") ? "✓" : "");
   const scopeTable: DocTable = {
-    head: ["#", "Scope item", "End user", "Client", "Ramsis"],
-    widths: [0.4, 7.2, 0.7, 0.85, 0.7],
-    align: ["center", "left", "center", "center", "center"],
-    sub: SCOPE_ROWS.map((row) => [undefined, row.basis, undefined, undefined, undefined]),
+    head: ["#", "Scope item", "Client", "Ramsis"],
+    widths: [0.6, 7.8, 0.8, 0.8],
+    align: ["center", "left", "center", "center"],
+    sub: SCOPE_ROWS.map((row) => [undefined, row.basis, undefined, undefined]),
     rows: SCOPE_ROWS.map((row, i) => [
-      String(i + 1),
+      SCOPE_NUMBERS[i],
       row.item,
-      scopeMark(settings, row, "endUser"),
-      scopeMark(settings, row, "client"),
-      scopeMark(settings, row, "ramsis"),
+      included([scopeMark(settings, row, "endUser"), scopeMark(settings, row, "client")]),
+      included([scopeMark(settings, row, "ramsis")]),
     ]),
   };
 
@@ -926,11 +995,8 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   }
 
   if (technical) {
-    add("Scope matrix — end user, client and Ramsis", {
+    add("Scope matrix — client and Ramsis", {
       table: scopeTable,
-      paragraphs: [
-        "Legend: R — responsible / executes · A — approves · C — consulted / reviews · I — informed · “-” not in this scope.",
-      ],
     });
 
     add("Manufacturing schedule after receipt of PO", {
@@ -1007,7 +1073,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
       bullets: [
         "Drawings and documents approved within one week of submission, electronically or by courier.",
         "Removal of any engineering hold within two weeks of purchase order.",
-        "No hold on any activity — design, drawings, order placement, manufacturing or inspection — due to information pending from the client or end user.",
+        "No hold on any activity — design, drawings, order placement, manufacturing or inspection — due to information pending from the client.",
         "No delay in approval of final documentation.",
       ],
     });
@@ -1066,7 +1132,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     `Thank you again for considering Ramsis Engineering for ${subject} for ${endUserClean}.`,
     `We have carefully reviewed the RFQ documents and completed our ${technical ? "mechanical design" : "preliminary review"} to identify the key material requirements for ${subject}${totalQty > 1 ? ` (${totalQty} nos.)` : " (1 no.)"}.`,
     technical
-      ? `This ${settings.offerType.toLowerCase()} offer sets out our scope, the split of responsibilities between the end user, the client and Ramsis, the delivery basis and${priced ? " our firm price" : " the commercial terms"}. It reflects our experience with comparable pressure equipment and a shop loading plan that accelerates material procurement and fabrication.`
+      ? `This ${settings.offerType.toLowerCase()} offer sets out our scope, the split of responsibilities between the client and Ramsis, the delivery basis and${priced ? " our firm price" : " the commercial terms"}. It reflects our experience with comparable pressure equipment and a shop loading plan that accelerates material procurement and fabrication.`
       : `This ${settings.offerType.toLowerCase()} offer carries the commercial terms — price basis, payment milestones, validity and delivery — for the equipment covered by our technical offer, and is issued separately for clients who prefer the two halves apart.`,
     "We trust our offer meets your requirements. Should you require any further information or clarification, please do not hesitate to contact us.",
   ];
@@ -1089,13 +1155,12 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     attention: settings.attention,
     client: clientName,
     clientAddress: settings.clientAddress,
-    endUser: endUserName,
+    endUser: clientName,
     subject,
     meta: [
       { label: "Offer no.", value: `${settings.offerNo} Rev. ${settings.revision || "R0"}` },
       { label: "Date", value: dateText },
-      { label: "Client (EPC)", value: clientName },
-      { label: "End user", value: endUserName },
+      { label: "Client", value: clientName },
       { label: "Project", value: `${project.projectNo} — ${project.projectName}` },
       { label: "Enquiry / RFQ", value: settings.enquiryRef || project.projectNo },
       { label: "Scope", value: `${totalQty} item(s) · ${fmtInt(weight)} kg` },
