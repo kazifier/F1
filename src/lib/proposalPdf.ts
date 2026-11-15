@@ -144,10 +144,12 @@ function renderProposalPdf(offer: ProposalDoc): jsPDF {
           const cy0 = y + h / 2 + size * 0.12;
           pdf.setDrawColor(...ACCENT);
           pdf.setLineWidth(1.4);
+          // jsPDF's line deltas run in screen space (y down): short stroke down
+          // to the right, then the long stroke up to the right — a check, not a V
           pdf.lines(
             [
-              [size * 0.26, -size * 0.3],
-              [size * 0.44, size * 0.64],
+              [size * 0.26, size * 0.3],
+              [size * 0.44, -size * 0.64],
             ],
             cx0 - size * 0.38,
             cy0,

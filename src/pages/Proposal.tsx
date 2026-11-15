@@ -267,10 +267,8 @@ export default function ProposalPage() {
             </thead>
             <tbody>
               {SCOPE_ROWS.map((row, i) => {
-                const included = (party: ScopeParty) =>
-                  party === "client"
-                    ? scopeMark(proposal, row, "client") !== "-" || scopeMark(proposal, row, "endUser") !== "-"
-                    : scopeMark(proposal, row, party) !== "-";
+                // only the client's own mark counts; the end user column is not printed
+                const included = (party: ScopeParty) => scopeMark(proposal, row, party) !== "-";
                 return (
                   <Fragment key={row.id}>
                     <tr>

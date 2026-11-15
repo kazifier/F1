@@ -824,8 +824,8 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
 
   // the basis or limit sits under the item, in the same column, in a smaller
   // face; a tick means the line is in scope for that party, a blank cell means
-  // it is not. The end user's responsibility is carried inside the client
-  // column, so the matrix names only the two parties that deal with each other.
+  // it is not. Only the client's own mark counts — the end user column is not
+  // carried into the offer.
   const included = (marks: ScopeMark[]) => (marks.some((m) => m !== "-") ? "✓" : "");
   const scopeTable: DocTable = {
     head: ["#", "Scope item", "Client", "Ramsis"],
@@ -835,7 +835,7 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
     rows: SCOPE_ROWS.map((row, i) => [
       SCOPE_NUMBERS[i],
       row.item,
-      included([scopeMark(settings, row, "endUser"), scopeMark(settings, row, "client")]),
+      included([scopeMark(settings, row, "client")]),
       included([scopeMark(settings, row, "ramsis")]),
     ]),
   };
