@@ -267,8 +267,11 @@ export default function ProposalPage() {
             </thead>
             <tbody>
               {SCOPE_ROWS.map((row, i) => {
-                // only the client's own mark counts; the end user column is not printed
-                const included = (party: ScopeParty) => scopeMark(proposal, row, party) !== "-";
+                // one line, one tick: the client holds it only where Ramsis does not
+                const included = (party: ScopeParty) =>
+                  party === "client"
+                    ? scopeMark(proposal, row, "client") !== "-" && scopeMark(proposal, row, "ramsis") === "-"
+                    : scopeMark(proposal, row, "ramsis") !== "-";
                 return (
                   <Fragment key={row.id}>
                     <tr>
@@ -290,10 +293,14 @@ export default function ProposalPage() {
                             style={{ padding: "1px 2px", fontSize: 12, minWidth: 48, textAlign: "center" }}
                             value={included(p.party) ? "✓" : "-"}
                             onChange={(e) => {
-                              const v = e.target.value;
-                              // the client cell carries the end user as well
-                              setScopeCell(row.id, p.party, v);
-                              if (p.party === "client") setScopeCell(row.id, "endUser", v);
+                              // a line has one owner: ticking a party clears the other
+                              if (e.target.value === "✓") {
+                                setScopeCell(row.id, "endUser", "-");
+                                setScopeCell(row.id, "client", p.party === "client" ? "R" : "-");
+                                setScopeCell(row.id, "ramsis", p.party === "ramsis" ? "R" : "-");
+                              } else {
+                                setScopeCell(row.id, p.party, "-");
+                              }
                             }}
                             title={included(p.party) ? "In scope" : "Not in scope"}
                           >

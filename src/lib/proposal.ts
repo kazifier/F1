@@ -823,21 +823,26 @@ export function buildProposal(input: ProposalInput): ProposalDoc {
   const dateText = dateLabel(settings.date);
 
   // the basis or limit sits under the item, in the same column, in a smaller
-  // face; a tick means the line is in scope for that party, a blank cell means
-  // it is not. Only the client's own mark counts — the end user column is not
-  // carried into the offer.
-  const included = (marks: ScopeMark[]) => (marks.some((m) => m !== "-") ? "✓" : "");
+  // face. A line belongs to one party only, so it carries a single tick: the
+  // client's tick where the client holds the line (they execute it and Ramsis
+  // does not), otherwise Ramsis. The end-user column is never read.
   const scopeTable: DocTable = {
     head: ["#", "Scope item", "Client", "Ramsis"],
     widths: [0.6, 7.8, 0.8, 0.8],
     align: ["center", "left", "center", "center"],
     sub: SCOPE_ROWS.map((row) => [undefined, row.basis, undefined, undefined]),
-    rows: SCOPE_ROWS.map((row, i) => [
-      SCOPE_NUMBERS[i],
-      row.item,
-      included([scopeMark(settings, row, "client")]),
-      included([scopeMark(settings, row, "ramsis")]),
-    ]),
+    rows: SCOPE_ROWS.map((row, i) => {
+      const clientMark = scopeMark(settings, row, "client");
+      const ramsisMark = scopeMark(settings, row, "ramsis");
+      const clientHolds = clientMark !== "-" && ramsisMark === "-";
+      const ramsisHolds = ramsisMark !== "-";
+      return [
+        SCOPE_NUMBERS[i],
+        row.item,
+        clientHolds ? "✓" : "",
+        ramsisHolds ? "✓" : "",
+      ];
+    }),
   };
 
   const priceRows: PriceRow[] = linesPerEquipment.map((r) => ({
