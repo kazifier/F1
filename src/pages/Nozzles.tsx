@@ -195,6 +195,7 @@ export default function NozzlesPage() {
                       Ø{j.neck.od.toFixed(1)} × {j.neck.wall.toFixed(1)} mm
                     </b>
                     <div className="est-sub">
+                      ID Ø{(j.neck.od - 2 * j.neck.wall).toFixed(1)} ·{" "}
                       {j.neck.plateNeck ? "rolled plate neck" : `Sch ${j.neck.schedule}`} · {j.neck.length} lg
                     </div>
                     <div className="est-sub">{j.neck.material}</div>

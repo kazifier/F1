@@ -38,13 +38,13 @@ function DimV({ y1, y2, x, label }: { y1: number; y2: number; x: number; label: 
       <line x1={x - 4} y1={y1} x2={x + 4} y2={y1} />
       <line x1={x - 4} y1={y2} x2={x + 4} y2={y2} />
       <text
-        x={x - 4}
+        x={x - 7}
         y={(y1 + y2) / 2}
         fill={INK}
         stroke="none"
         fontSize={8.5}
         textAnchor="middle"
-        transform={`rotate(-90 ${x - 4} ${(y1 + y2) / 2})`}
+        transform={`rotate(-90 ${x - 7} ${(y1 + y2) / 2})`}
       >
         {label}
       </text>
@@ -143,7 +143,7 @@ function SrnSection({ j }: { j: NozzleJoint }) {
         x1={cx - neckHalf}
         x2={cx + neckHalf}
         y={flangeBot + Math.max((shellTop - flangeBot) / 2, 12)}
-        label={`Ø${d1(f.neckOd)} neck`}
+        label={`Ø${d1(f.neckOd)} OD`}
       />
       <DimV
         y1={flangeBot + 16}
@@ -151,6 +151,18 @@ function SrnSection({ j }: { j: NozzleJoint }) {
         x={cx + neckHalf + 22}
         label={`${d1(f.neckThk)} wall`}
       />
+
+      {/* bore label */}
+      <text
+        x={cx}
+        y={flangeBot + 24}
+        fill={INK}
+        fontSize={8.5}
+        textAnchor="middle"
+        transform={`rotate(-90 ${cx} ${flangeBot + 24})`}
+      >
+        {`Ø${d1(Math.max(f.neckOd - 2 * f.neckThk, 1))} ID`}
+      </text>
 
       {/* leaders */}
       <text x={cx + flangeHalf + 26} y={faceY + (flangeBot - faceY) / 2 + 24} fill={MUTED} fontSize={8}>
@@ -282,9 +294,12 @@ export default function SrnNozzleDetail({ joints }: { joints: NozzleJoint[] }) {
             {d1(f.flangeThk)} thk · facing RF, 125–250 AARH, gasket {j.gasket.type} {j.gasket.thk} mm. The flange is{" "}
             <b>forged integral with the neck</b> — nothing is welded on and there is no pipe between flange and shell.
           </Spec>
-          <Spec k="Neck / bore">
-            Neck Ø{d1(f.neckOd)} × {d1(f.neckThk)} wall (governing UG-45 + UG-37), bore Ø{d1(bore)} matching the{" "}
-            {d1(j.ug37.d)} mm opening in the shell; height H {d1(f.height)} mm from the shell surface to the RF face.
+          <Spec k="Pipe / neck">
+            Pipe OD <b>Ø{d1(f.neckOd)}</b> ({j.size} to ASME B36.10) · pipe wall {" "}
+            <b>{d1(j.neck.wall)}</b> (Sch {j.neck.schedule}) · pipe ID <b>Ø{d1(f.neckOd - 2 * j.neck.wall)}</b> = OD − 2 ×
+            wall. Forging neck wall {d1(f.neckThk)} mm (governing UG-45 + UG-37), machined bore <b>Ø{d1(bore)}</b> to match
+            the flange bore and the {d1(j.ug37.d)} mm shell opening; height H {d1(f.height)} mm from the shell surface to the RF
+            face.
           </Spec>
           <Spec k="Weld to shell">
             Full-penetration single-V groove weld, set-on, welded from the outside: bevel 37.5° ± 2.5°, root face 2 ± 0.5 mm,
@@ -313,10 +328,11 @@ export default function SrnNozzleDetail({ joints }: { joints: NozzleJoint[] }) {
                 <th className="num">Qty</th>
                 <th>Size · class</th>
                 <th>Flange</th>
-                <th className="num">Neck Ø × wall</th>
+                <th className="num">OD</th>
+                <th className="num">ID</th>
+                <th className="num">Wall (thk)</th>
                 <th className="num">H to RF</th>
                 <th className="num">Flange OD × thk</th>
-                <th className="num">Bore</th>
                 <th className="num">Weight</th>
                 <th className="num">Total</th>
               </tr>
@@ -332,14 +348,16 @@ export default function SrnNozzleDetail({ joints }: { joints: NozzleJoint[] }) {
                       {x.size} · {x.flange.rating}
                     </td>
                     <td>{x.flange.type}</td>
+                    <td className="num">{d1(g.neckOd)}</td>
+                    <td className="num">{d1(Math.max(g.neckOd - 2 * g.neckThk, 1))}</td>
                     <td className="num">
-                      {d1(g.neckOd)} × {d1(g.neckThk)}
+                      {d1(g.neckThk)}
+                      <div className="est-sub">pipe {d1(x.neck.wall)} · Sch {x.neck.schedule}</div>
                     </td>
                     <td className="num">{d1(g.height)}</td>
                     <td className="num">
                       {d1(g.flangeOd)} × {d1(g.flangeThk)}
                     </td>
-                    <td className="num">{d1(Math.max(g.neckOd - 2 * g.neckThk, 1))}</td>
                     <td className="num">{d1(g.weight)}</td>
                     <td className="num">
                       <b>{d1(g.weight * x.qty)}</b>
