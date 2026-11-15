@@ -319,10 +319,10 @@ export default function ProposalPage() {
         <div className="est-note">
           Lines follow the sequence of the work itself — process design and datasheet first, then engineering,
           procurement, fabrication, inspection and testing, finishing and dispatch. The basis or limit is printed under
-          each line in the offer, so each activity is claimed once. The client column carries the end user, since the
-          plant owner sits behind the EPC that issues the purchase order; a tick means the line is in that party's scope,
-          an em dash means it is not. The internals line is split so each item — trays, demister, vortex breaker,
-          distributor pipes and support rings — is ticked on its own.
+          each line in the offer, so each activity is claimed once. A line belongs to one party, so it carries a single
+          tick: tick Client to move the line to the client, tick Ramsis to keep it with us, and the other column clears.
+          No legend is printed — the tick itself is the whole statement. The internals line is split so each item — trays,
+          demister, vortex breaker, distributor pipes and support rings — is ticked on its own.
         </div>
       </div>
 
