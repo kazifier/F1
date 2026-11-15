@@ -6,6 +6,7 @@ import { EXCHANGER_UNITS } from "../data/exchangers";
 import { buildExchangerScope } from "../lib/exchangerParts";
 import { designExchanger } from "../lib/tema";
 import { jointSummary, nozzleJoints, type NozzleJoint } from "../lib/nozzleDetail";
+import SrnNozzleDetail from "../components/SrnNozzleDetail";
 
 /**
  * Nozzle detailed materials — one line per nozzle / manway mark with the five
@@ -260,6 +261,8 @@ export default function NozzlesPage() {
           so they are shown on the datasheet register but not detailed or priced as nozzles here.
         </div>
       </div>
+
+      <SrnNozzleDetail joints={joints} />
 
       <div className="est-panel">
         <div className="est-panel-head">UG-37 area check per mark</div>
